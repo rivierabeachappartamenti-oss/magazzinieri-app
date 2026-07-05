@@ -1,0 +1,1529 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1B5BD7">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>App Magazzinieri — Prototipo dimostrativo</title>
+<style>
+  /* ============ TOKENS ============ */
+  :root{
+    /* Identità dell'app (deliberata, NON segue il tema del viewer) */
+    --blu:#1B5BD7; --blu-scuro:#164BAF; --rec:#C21F2E;
+    --ok:#1E7B3C; --incerto:#9A6A00; --mancante:#B3261E;
+    --bg:#F6F7F9; --surface:#FFFFFF; --ink:#16181D; --ink2:#5B626F;
+    --line:#E4E7EC; --line2:#EDF0F4; --shelfbg:#EEF1F6;
+    --ok-bg:#E7F4EC; --incerto-bg:#FBF2DD; --mancante-bg:#FBEAE8; --blu-bg:#EAF0FD;
+    /* Cornice-telefono e sfondo scena: SI adattano al tema del viewer */
+    --stage:#E7E9EE; --frame:#0E0F13; --frame-line:#2A2C33; --frameglow:rgba(0,0,0,.28);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --stage:#0B0C0F; --frame:#17181C; --frame-line:#303239; --frameglow:rgba(0,0,0,.6); }
+  }
+  :root[data-theme="light"]{ --stage:#E7E9EE; --frame:#0E0F13; --frame-line:#2A2C33; --frameglow:rgba(0,0,0,.28); }
+  :root[data-theme="dark"]{ --stage:#0B0C0F; --frame:#17181C; --frame-line:#303239; --frameglow:rgba(0,0,0,.6); }
+
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0; background:var(--stage);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; color:var(--ink);
+    min-height:100dvh; display:flex; align-items:center; justify-content:center;
+  }
+  /* ============ CORNICE TELEFONO ============ */
+  .stage{ width:100%; min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .device{
+    width:390px; height:min(844px, calc(100dvh - 48px));
+    background:var(--frame); border-radius:44px; padding:12px;
+    box-shadow:0 30px 70px -20px var(--frameglow), 0 0 0 1px var(--frame-line);
+  }
+  @media (max-width:460px){
+    .stage{ padding:0; }
+    .device{ width:100%; height:100dvh; border-radius:0; padding:0; box-shadow:none; }
+  }
+  .app{
+    position:relative; height:100%; width:100%; background:var(--bg); overflow:hidden;
+    border-radius:32px; display:flex; flex-direction:column; isolation:isolate;
+  }
+  @media (max-width:460px){ .app{ border-radius:0; } .statusbar{ display:none; } }
+
+  /* ============ STATUS BAR FINTA ============ */
+  .statusbar{
+    height:26px; flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+    padding:0 20px; font-size:12px; font-weight:600; color:var(--ink); letter-spacing:.02em;
+    background:var(--surface);
+  }
+  .statusbar .dots{ display:flex; gap:3px; align-items:center; }
+  .statusbar .dots i{ width:6px; height:6px; border-radius:50%; background:var(--ink); display:block; opacity:.85; }
+
+  /* ============ TOPBAR ============ */
+  .topbar{
+    flex:0 0 auto; min-height:58px; background:var(--surface); border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:6px; padding:8px 10px; position:relative; z-index:5;
+  }
+  .tb-main{ flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; }
+  .tb-title{ font-size:18px; font-weight:750; line-height:1.15; letter-spacing:-.01em;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tb-sub{ font-size:12px; color:var(--ink2); font-weight:500; margin-top:1px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tb-rec{ color:var(--rec); font-weight:700; display:flex; align-items:center; gap:7px; }
+  .iconbtn{
+    flex:0 0 auto; width:56px; height:56px; border:none; background:transparent; color:var(--ink);
+    border-radius:12px; display:grid; place-items:center; cursor:pointer;
+  }
+  .iconbtn:hover{ background:var(--line2); }
+  .iconbtn svg{ width:24px; height:24px; }
+  .avatar{
+    width:38px; height:38px; border-radius:50%; background:var(--blu); color:#fff;
+    display:grid; place-items:center; font-weight:750; font-size:16px; flex:0 0 auto;
+  }
+
+  /* ============ SCREEN ============ */
+  .screen{ flex:1 1 auto; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; }
+  .pad{ padding:18px 16px; }
+  .h-eyebrow{ font-size:12px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--ink2); }
+  .h1{ font-size:26px; font-weight:780; letter-spacing:-.02em; margin:6px 0 2px; text-wrap:balance; }
+  .lead{ color:var(--ink2); font-size:14.5px; line-height:1.45; }
+
+  /* ============ LOGIN ============ */
+  .usercard{
+    width:100%; text-align:left; background:var(--surface); border:1px solid var(--line);
+    border-radius:16px; padding:16px; min-height:74px; display:flex; align-items:center; gap:14px;
+    cursor:pointer; font:inherit; color:inherit;
+  }
+  .usercard:hover{ border-color:#C9D4EC; }
+  .usercard .av{ width:46px; height:46px; border-radius:50%; background:var(--blu-bg); color:var(--blu);
+    display:grid; place-items:center; font-weight:750; font-size:20px; }
+  .usercard .un{ font-size:19px; font-weight:700; }
+  .usercard .us{ font-size:13.5px; color:var(--ink2); margin-top:1px; }
+  .usercard .chev{ margin-left:auto; color:var(--ink2); }
+  .list-gap{ display:flex; flex-direction:column; gap:12px; }
+
+  /* ============ HOME ============ */
+  .seg{ display:flex; background:var(--line2); border-radius:14px; padding:4px; gap:4px; }
+  .seg-btn{
+    flex:1; border:none; background:transparent; font:inherit; font-weight:650; font-size:14.5px;
+    color:var(--ink2); padding:12px 8px; border-radius:10px; cursor:pointer; min-height:48px;
+  }
+  .seg-btn[aria-selected="true"]{ background:var(--surface); color:var(--ink);
+    box-shadow:0 1px 3px rgba(16,24,40,.12); font-weight:720; }
+  .corsia-card{
+    width:100%; text-align:left; background:var(--surface); border:1px solid var(--line);
+    border-radius:16px; padding:16px; cursor:pointer; font:inherit; color:inherit;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  .corsia-card:hover{ border-color:#C9D4EC; }
+  .cc-top{ display:flex; align-items:center; gap:10px; }
+  .cc-name{ font-size:18px; font-weight:730; letter-spacing:-.01em; }
+  .cc-meta{ font-size:13px; color:var(--ink2); margin-top:2px; }
+  .cc-chev{ margin-left:auto; color:var(--ink2); }
+  .pill{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:650;
+    padding:5px 10px; border-radius:999px; }
+  .pill svg{ width:14px; height:14px; }
+  .pill.fresh{ background:var(--ok-bg); color:var(--ok); }
+  .pill.stale{ background:var(--incerto-bg); color:var(--incerto); }
+  .pill.none{ background:var(--line2); color:var(--ink2); }
+
+  /* ============ CORSIA / SALA ============ */
+  .shelf-sec{ position:relative; }
+  .shelf-title{
+    position:sticky; top:0; z-index:3; background:var(--shelfbg);
+    border-top:1px solid var(--line); border-bottom:1px solid var(--line);
+    text-align:center; font-weight:800; font-size:15px; text-transform:uppercase; letter-spacing:.05em;
+    padding:12px 46px; color:var(--ink); display:block; position:sticky;
+  }
+  .shelf-title .st-wrap{ position:relative; display:block; }
+  .shelf-title .st-kebab{ position:absolute; right:-38px; top:50%; transform:translateY(-50%); }
+  .voce{
+    display:flex; align-items:center; gap:8px; min-height:58px; padding:8px 6px 8px 16px;
+    background:var(--surface); border-bottom:1px solid var(--line2);
+  }
+  .voce-name{ flex:1; font-size:16.5px; line-height:1.3; padding:8px 0; cursor:text; min-width:0;
+    word-break:break-word; }
+  .voce-name.provisional{ color:var(--ink2); font-style:italic; }
+  .voce .flash{ animation:flash .9s ease; }
+  @keyframes flash{ 0%{ background:var(--ok-bg);} 100%{ background:transparent;} }
+  .rowbtn{ flex:0 0 auto; width:56px; height:56px; border:none; background:transparent; color:var(--ink2);
+    border-radius:10px; display:grid; place-items:center; cursor:pointer; }
+  .rowbtn:hover{ background:var(--line2); color:var(--ink); }
+  .rowbtn svg{ width:20px; height:20px; }
+  .addbtn{
+    width:100%; text-align:left; background:var(--surface); border:none; border-bottom:1px solid var(--line2);
+    color:var(--blu); font:inherit; font-weight:600; font-size:15px; padding:14px 16px; cursor:pointer;
+    display:flex; align-items:center; gap:10px; min-height:56px;
+  }
+  .addbtn svg{ width:20px; height:20px; }
+  .addbtn:hover{ background:var(--blu-bg); }
+  .newshelf{
+    margin:16px; width:calc(100% - 32px); background:transparent; border:1.5px dashed #B9C2D4;
+    color:var(--blu); border-radius:14px; padding:14px; font:inherit; font-weight:650; font-size:15px;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px; min-height:56px;
+  }
+  .newshelf svg{ width:20px; height:20px; flex:0 0 auto; }
+  .newshelf:hover{ background:var(--blu-bg); border-color:var(--blu); }
+  .inline-edit{
+    flex:1; font:inherit; font-size:16.5px; padding:9px 10px; border:2px solid var(--blu);
+    border-radius:9px; outline:none; background:#fff; color:var(--ink); min-width:0;
+  }
+
+  /* ============ STOCK OVERLAY ============ */
+  .stock-note{ display:flex; align-items:center; gap:8px; padding:10px 16px; background:var(--blu-bg);
+    color:var(--blu-scuro); font-size:13px; font-weight:600; border-bottom:1px solid var(--line); }
+  .stock-note svg{ width:16px; height:16px; }
+  .stockbadge{ flex:0 0 auto; display:inline-flex; align-items:center; gap:6px; font-weight:720;
+    font-size:15px; padding:6px 10px; border-radius:10px; font-variant-numeric:tabular-nums; }
+  .stockbadge svg{ width:16px; height:16px; }
+  .stockbadge.has{ background:var(--ok-bg); color:var(--ok); }
+  .stockbadge.zero{ background:var(--mancante-bg); color:var(--mancante); }
+  .stockbadge.nodata{ background:var(--line2); color:var(--ink2); }
+  .approx-btn{ flex:0 0 auto; border:1px solid #E3CE93; background:var(--incerto-bg); color:var(--incerto);
+    font:inherit; font-weight:750; font-size:14px; border-radius:10px; padding:6px 9px; cursor:pointer;
+    display:inline-flex; align-items:center; gap:4px; min-height:56px; }
+  .approx-btn:hover{ background:#F6E9C6; }
+  .miss-dot{ width:9px; height:9px; border-radius:50%; background:var(--mancante); flex:0 0 auto; }
+  .section-h{ padding:16px 16px 8px; font-size:12.5px; font-weight:750; letter-spacing:.05em;
+    text-transform:uppercase; color:var(--ink2); }
+  .da-item{ display:flex; align-items:center; gap:10px; min-height:58px; padding:8px 16px;
+    background:var(--surface); border-bottom:1px solid var(--line2); }
+  .da-item .n{ flex:1; font-size:16px; }
+  .assign-btn{ border:1px solid var(--blu); background:var(--blu-bg); color:var(--blu); font:inherit;
+    font-weight:700; font-size:14px; border-radius:10px; padding:8px 12px; cursor:pointer; min-height:56px; }
+  .empty-note{ padding:28px 20px; text-align:center; color:var(--ink2); font-size:14px; line-height:1.5; }
+
+  /* ============ INVENTARIO ============ */
+  .inv-banner{ margin:16px; padding:14px 16px; border-radius:14px; background:var(--blu-bg);
+    border:1px solid #CADAF6; display:flex; align-items:center; gap:12px; }
+  .inv-banner .rec-live{ width:12px; height:12px; border-radius:50%; background:var(--blu);
+    flex:0 0 auto; box-shadow:0 0 0 0 rgba(27,91,215,.5); animation:pulse 1.8s infinite; }
+  @keyframes pulse{ 0%{ box-shadow:0 0 0 0 rgba(27,91,215,.45);} 70%{ box-shadow:0 0 0 8px rgba(27,91,215,0);} 100%{ box-shadow:0 0 0 0 rgba(27,91,215,0);} }
+  .inv-banner .txt b{ font-size:15px; } .inv-banner .txt small{ display:block; color:var(--ink2); font-size:12.5px; margin-top:2px; }
+  .inv-count{ margin-left:auto; font-size:22px; font-weight:800; color:var(--blu); font-variant-numeric:tabular-nums; }
+
+  /* ============ DETTATURA / MIC ============ */
+  .dict-area{ padding:16px; }
+  .dict-sim{ display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:650;
+    color:var(--incerto); background:var(--incerto-bg); padding:6px 11px; border-radius:999px; margin-bottom:14px; }
+  .dict-sim svg{ width:14px; height:14px; }
+  .mic-auth{ width:calc(100% - 32px); margin:0 16px 14px; background:var(--blu-bg); border:1.5px solid #CADAF6;
+    color:var(--blu-scuro); border-radius:14px; padding:14px 16px; font:inherit; cursor:pointer; text-align:left;
+    display:flex; align-items:center; gap:13px; min-height:64px; }
+  .mic-auth:hover{ background:#DEE9FC; border-color:var(--blu); }
+  .mic-auth .ma-emoji{ font-size:26px; line-height:1; flex:0 0 auto; }
+  .mic-auth .ma-txt b{ display:block; font-size:15.5px; font-weight:720; color:var(--blu-scuro); }
+  .mic-auth .ma-txt small{ display:block; font-size:13px; color:var(--ink2); margin-top:2px; line-height:1.35; }
+  .dict-info{ width:calc(100% - 32px); margin:0 16px 14px; background:var(--incerto-bg); border:1px solid #E3CE93;
+    color:var(--incerto); border-radius:14px; padding:13px 16px; font-size:13.5px; font-weight:600; line-height:1.4; }
+  .mic-wrap{ display:flex; flex-direction:column; align-items:center; gap:12px; padding:8px 0 4px; }
+  .mic-btn{ width:88px; height:88px; border-radius:50%; border:none; cursor:pointer; color:#fff;
+    background:var(--blu); display:grid; place-items:center; box-shadow:0 8px 24px -8px rgba(27,91,215,.6); }
+  .mic-btn svg{ width:38px; height:38px; }
+  .mic-btn.rec{ background:var(--rec); box-shadow:0 0 0 0 rgba(194,31,46,.5); animation:mic 1.3s infinite; }
+  @keyframes mic{ 0%{ box-shadow:0 0 0 0 rgba(194,31,46,.5);} 70%{ box-shadow:0 0 0 18px rgba(194,31,46,0);} 100%{ box-shadow:0 0 0 0 rgba(194,31,46,0);} }
+  .mic-label{ font-size:14px; font-weight:650; color:var(--ink2); }
+  .mic-label.on{ color:var(--rec); font-weight:720; }
+  .cmd-confirm{ margin:14px 16px; padding:14px; border-radius:14px; background:var(--incerto-bg);
+    border:1px solid #E3CE93; display:flex; align-items:center; gap:12px; }
+  .cmd-confirm .ct{ flex:1; font-size:14px; font-weight:600; color:var(--incerto); }
+  .cmd-confirm button{ border:none; background:var(--incerto); color:#fff; font:inherit; font-weight:700;
+    border-radius:10px; padding:10px 14px; cursor:pointer; min-height:56px; display:inline-flex; align-items:center; gap:6px; }
+  .cmd-confirm button svg{ width:18px; height:18px; }
+
+  /* ============ ACTION BAR ============ */
+  .actionbar{ flex:0 0 auto; background:var(--surface); border-top:1px solid var(--line);
+    padding:10px 12px; display:flex; gap:10px; }
+  .actionbar.hidden{ display:none; }
+  .btn{ flex:1; min-height:56px; border-radius:14px; border:1px solid var(--line); background:var(--surface);
+    color:var(--ink); font:inherit; font-weight:720; font-size:16px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; gap:9px; }
+  .btn svg{ width:22px; height:22px; }
+  .btn:hover{ background:var(--line2); }
+  .btn:disabled{ opacity:.55; cursor:default; }
+  .btn-primary{ background:var(--blu); color:#fff; border-color:var(--blu); }
+  .btn-primary:hover{ background:var(--blu-scuro); }
+  .btn-rec{ background:var(--rec); color:#fff; border-color:var(--rec); }
+  .btn-danger-soft{ color:var(--mancante); border-color:#E7C6C2; background:var(--mancante-bg); }
+  .btn-ghost{ background:transparent; }
+  .actionbar.col{ flex-direction:column; }
+
+  /* ============ OVERLAY / SHEET / MODAL / TOAST ============ */
+  .ov{ position:absolute; inset:0; z-index:40; display:flex; }
+  .ov-bd{ position:absolute; inset:0; background:rgba(16,20,30,.42); animation:fade .18s ease; }
+  @keyframes fade{ from{ opacity:0;} to{ opacity:1;} }
+  @keyframes rise{ from{ transform:translateY(24px); opacity:0;} to{ transform:translateY(0); opacity:1;} }
+  .sheet{ position:relative; margin-top:auto; width:100%; background:var(--surface);
+    border-radius:22px 22px 0 0; padding:8px 12px calc(14px + env(safe-area-inset-bottom)); z-index:1;
+    animation:rise .22s ease; max-height:82%; overflow-y:auto; }
+  .sheet-grab{ width:40px; height:5px; border-radius:3px; background:var(--line); margin:8px auto 6px; }
+  .sheet-title{ font-size:15px; font-weight:730; padding:8px 10px 4px; }
+  .sheet-sub{ font-size:13px; color:var(--ink2); padding:0 10px 8px; line-height:1.4; }
+  .sheet-item{ width:100%; text-align:left; background:transparent; border:none; font:inherit; font-size:16.5px;
+    padding:15px 12px; border-radius:12px; cursor:pointer; color:var(--ink); display:flex; align-items:center; gap:12px; min-height:56px; }
+  .sheet-item:hover{ background:var(--line2); }
+  .sheet-item svg{ width:22px; height:22px; color:var(--ink2); }
+  .sheet-item.danger{ color:var(--mancante); } .sheet-item.danger svg{ color:var(--mancante); }
+  .modal{ position:relative; margin:auto; width:calc(100% - 40px); max-width:340px; background:var(--surface);
+    border-radius:20px; padding:22px; z-index:1; animation:rise .2s ease; }
+  .modal h3{ margin:0 0 10px; font-size:19px; font-weight:750; letter-spacing:-.01em; text-wrap:balance; }
+  .modal p{ margin:0 0 18px; font-size:14.5px; color:var(--ink2); line-height:1.5; }
+  .modal p b{ color:var(--ink); }
+  .modal-actions{ display:flex; flex-direction:column; gap:9px; }
+  .m-btn{ min-height:56px; border-radius:12px; border:1px solid var(--line); background:var(--surface);
+    color:var(--ink); font:inherit; font-weight:700; font-size:15.5px; cursor:pointer; padding:0 14px; }
+  .m-btn:hover{ background:var(--line2); }
+  .m-btn.primary{ background:var(--blu); color:#fff; border-color:var(--blu); }
+  .m-btn.danger{ background:var(--mancante); color:#fff; border-color:var(--mancante); }
+  .m-btn.danger:hover{ filter:brightness(.94); }
+
+  .toast-root{ position:absolute; left:0; right:0; bottom:78px; z-index:60; display:flex; flex-direction:column;
+    align-items:center; gap:8px; pointer-events:none; padding:0 16px; }
+  .toast{ background:#111318; color:#fff; font-size:14px; font-weight:600; padding:12px 16px; border-radius:12px;
+    box-shadow:0 8px 24px -8px rgba(0,0,0,.5); animation:rise .2s ease; max-width:100%; text-align:center; pointer-events:auto; }
+  .snackbar{ background:#111318; color:#fff; font-size:14px; font-weight:600; padding:10px 10px 10px 16px; border-radius:12px;
+    display:flex; align-items:center; gap:14px; box-shadow:0 8px 24px -8px rgba(0,0,0,.5); animation:rise .2s ease; pointer-events:auto; }
+  .snackbar button{ background:transparent; border:none; color:#7FB0FF; font:inherit; font-weight:750; font-size:14px;
+    cursor:pointer; padding:8px 10px; border-radius:8px; }
+
+  /* ============ PROTO BANNER ============ */
+  .proto-banner{ flex:0 0 auto; background:#111318; color:#D6DAE2; font-size:11px; font-weight:600;
+    letter-spacing:.01em; text-align:center; padding:6px 12px; line-height:1.35; display:flex;
+    align-items:center; justify-content:center; gap:7px; }
+  .proto-banner svg{ width:13px; height:13px; flex:0 0 auto; opacity:.85; }
+
+  :focus-visible{ outline:3px solid #7FB0FF; outline-offset:2px; border-radius:8px; }
+  @media (prefers-reduced-motion:reduce){
+    *{ animation:none !important; transition:none !important; }
+  }
+</style>
+
+<div class="stage">
+  <div class="device">
+    <div class="app" id="app">
+      <div class="statusbar">
+        <span id="clock">9:41</span>
+        <span class="dots"><i></i><i></i><i></i></span>
+      </div>
+      <header class="topbar" id="topbar"></header>
+      <main class="screen" id="screen"></main>
+      <div class="actionbar hidden" id="actionbar"></div>
+      <div class="proto-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
+        Prototipo dimostrativo — dati di esempio
+      </div>
+      <div class="toast-root" id="toastRoot"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function(){
+  /* ============ ICONE (SVG inline, currentColor) ============ */
+  const S2='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+  const IC = {
+    back:  S2+'<path d="M15 5l-7 7 7 7"/></svg>',
+    chev:  S2+'<path d="M9 5l7 7-7 7"/></svg>',
+    kebab: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>',
+    mic:   S2+'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><path d="M12 17v4"/></svg>',
+    plus:  S2+'<path d="M12 5v14M5 12h14"/></svg>',
+    pencil:S2+'<path d="M4 20l1-4 9.5-9.5 3 3L8 19l-4 1z"/><path d="M13.5 6.5l3 3"/></svg>',
+    trash: S2+'<path d="M4 7h16M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+    box:   S2+'<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg>',
+    check: S2+'<path d="M4 12l5 5L20 6"/></svg>',
+    up:    S2+'<path d="M6 15l6-6 6 6"/></svg>',
+    down:  S2+'<path d="M6 9l6 6 6-6"/></svg>',
+    clock: S2+'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    wave:  S2+'<path d="M4 12h2M8 8v8M12 5v14M16 8v8M20 12h0"/></svg>',
+    info:  S2+'<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>',
+    logout:S2+'<path d="M15 4h4v16h-4M11 8l-4 4 4 4M7 12h9"/></svg>'
+  };
+
+  /* ============ DATI DI ESEMPIO (02-modello-dati) ============ */
+  // Isolamento: ogni utente possiede solo le PROPRIE corsie e denominazioni.
+  const DB = {
+    mario: {
+      name:'Mario', initial:'M', settore:'Frighi',
+      corsie: [
+        { id:'c1', nome:'Banco Frigo', fresh:{state:'fresh', label:'Inventario: oggi 08:25'},
+          scaffali:[
+            { id:'s1', titolo:'Latticini', voci:[
+              {id:'p1', nome:'Mozzarella 125g'},
+              {id:'p2', nome:'Yogurt greco 500g'},
+              {id:'p3', nome:'Burro 250g'},
+              {id:'p4', nome:'Latte intero 1L x6'},
+            ]},
+            { id:'s2', titolo:'Salumi', voci:[
+              {id:'p5', nome:'Prosciutto cotto'},
+              {id:'p6', nome:'Salame Milano'},
+              {id:'p7', nome:'Mortadella 100g'},
+            ]},
+            { id:'s3', titolo:'Formaggi', voci:[
+              {id:'p8', nome:'Parmigiano 200g'},
+              {id:'p9', nome:'Gorgonzola dolce'},
+            ]},
+          ],
+          daAssegnare:[ {id:'da1', nome:'Tisana finocchio', q:6}, {id:'da2', nome:'Burrata', q:3} ]
+        },
+        { id:'c2', nome:'Frigo Bevande Fresche', fresh:{state:'stale', label:'Inventario: 2 lug'},
+          scaffali:[
+            { id:'s4', titolo:'Succhi e latte veg', voci:[
+              {id:'p10', nome:'Succo ACE 1L', stock:null},
+              {id:'p11', nome:'Latte di soia 1L', stock:null},
+            ]},
+          ], daAssegnare:[]
+        },
+      ],
+      inv:{ active:true, settore:'Frighi', iniziata:'10:15', prevData:'2 lug', prevCount:47,
+        righe:[
+          {id:'r1', nome:'Yogurt greco 500g', quantita:[{n:8,unita:'vaschetta'}], raw:'Yogurt greco 500g 8 vaschette'},
+          {id:'r2', nome:'Latte intero 1L x6', quantita:[{n:2,unita:'cartone'}], raw:'Latte intero 1L x6 2 cartoni'},
+          {id:'r3', nome:'Burro 250g', quantita:[{n:3,unita:'pezzo'}], raw:'Burro 250g 3 pezzi'},
+          {id:'r4', nome:'Mozzarella 125g', quantita:[{n:0.5,unita:'scaffale'}], raw:'Mozzarella 125g mezzo scaffale'},
+          {id:'r5', nome:'Mortadella 100g', quantita:[{n:0,unita:'pezzo'}], raw:'Mortadella 100g 0 pezzi'},
+          {id:'r6', nome:'Burrata', quantita:[{n:3,unita:'vaschetta'}], raw:'Burrata 3 vaschette'},
+          {id:'r7', nome:'Tisana finocchio', quantita:[{n:6,unita:'pezzo'}], raw:'Tisana finocchio 6 pezzi'},
+        ] }
+    },
+    luca: {
+      name:'Luca', initial:'L', settore:'Bibite',
+      corsie:[
+        { id:'lc1', nome:'Corsia Bibite', fresh:{state:'none', label:'Nessun inventario'},
+          scaffali:[
+            { id:'ls1', titolo:'Acque', voci:[
+              {id:'lp1', nome:'Acqua naturale 1,5L x6', stock:null},
+              {id:'lp2', nome:'Acqua frizzante 1L', stock:null},
+            ]},
+            { id:'ls2', titolo:'Birre', voci:[
+              {id:'lp3', nome:'Birra chiara 66cl', stock:null},
+              {id:'lp4', nome:'Birra artigianale IPA', stock:null},
+            ]},
+          ], daAssegnare:[]
+        },
+      ],
+      inv:{ active:false, settore:'Bibite', iniziata:null, prevData:null, prevCount:0, righe:[] }
+    }
+  };
+
+  /* ============ STATO ============ */
+  let S = { screen:'login', userId:null, corsiaId:null, mode:'modifica',
+            filter:false, homeTab:'sala', recording:false, magRecording:false, dictSid:null };
+  let uid = 100; const nid = ()=> 'x'+(uid++);
+  let TIMERS = [];
+  const clearTimers = ()=>{ TIMERS.forEach(clearTimeout); TIMERS=[]; };
+  const wait = (ms)=> new Promise(r=>{ TIMERS.push(setTimeout(r,ms)); });
+  const REDUCED = window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+
+  const U = ()=> DB[S.userId];
+  const corsia = (id)=> U().corsie.find(c=>c.id===(id||S.corsiaId));
+  const scaffOf = (sid)=> corsia().scaffali.find(s=>s.id===sid);
+  const esc = (s)=> String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // normalizzazione per confronto nomi/token: minuscolo, senza accenti, spazi compattati
+  const norm = (s)=> String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
+  const cap = (s)=>{ s=String(s==null?'':s).trim(); return s? s.charAt(0).toUpperCase()+s.slice(1) : s; };
+
+  /* ============ LESSICO UNITÀ (parser quantità) ============ */
+  // canonico singolare -> plurale
+  const UNITA_PL = {
+    pezzo:'pezzi', cartone:'cartoni', scatola:'scatole', scatolone:'scatoloni',
+    cassa:'casse', cassetta:'cassette', confezione:'confezioni', vaschetta:'vaschette',
+    bottiglia:'bottiglie', lattina:'lattine', fardello:'fardelli', collo:'colli',
+    pacco:'pacchi', busta:'buste', sacco:'sacchi', sacchetto:'sacchetti',
+    barattolo:'barattoli', vasetto:'vasetti', flacone:'flaconi', tanica:'taniche',
+    bancale:'bancali', pallet:'pallet', pedana:'pedane', scaffale:'scaffali',
+    ripiano:'ripiani', strato:'strati', fila:'file', espositore:'espositori',
+    cestello:'cestelli', blister:'blister', stecca:'stecche',
+    grammo:'grammi', chilo:'chili', litro:'litri'
+  };
+  // qualsiasi forma di superficie (singolare o plurale) -> canonico singolare
+  const UNIT_FORM = {};
+  Object.keys(UNITA_PL).forEach(s=>{ UNIT_FORM[s]=s; UNIT_FORM[UNITA_PL[s]]=s; });
+  UNIT_FORM['kg']='chilo';
+  // unità di genere femminile (per concordanza di «mezzo/mezza»)
+  const FEM = new Set(['scatola','cassa','cassetta','confezione','vaschetta','bottiglia',
+    'lattina','busta','tanica','pedana','fila','stecca']);
+  const plural = (u)=> UNITA_PL[u] || u;
+
+  /* ---- numeri in parole italiane ---- */
+  const NUMWORDS = {
+    zero:0, un:1, uno:1, una:1, due:2, tre:3, quattro:4, cinque:5, sei:6, sette:7,
+    otto:8, nove:9, dieci:10, undici:11, dodici:12, tredici:13, quattordici:14,
+    quindici:15, sedici:16, diciassette:17, diciotto:18, diciannove:19,
+    venti:20, trenta:30, quaranta:40, cinquanta:50, sessanta:60, settanta:70,
+    ottanta:80, novanta:90, cento:100
+  };
+  (function(){
+    const unitsW = ['','uno','due','tre','quattro','cinque','sei','sette','otto','nove'];
+    const tensW  = {20:'venti',30:'trenta',40:'quaranta',50:'cinquanta',60:'sessanta',70:'settanta',80:'ottanta',90:'novanta'};
+    Object.keys(tensW).forEach(tv=>{
+      const tw=tensW[tv];
+      for(let u=1;u<=9;u++){
+        // elisione della vocale finale davanti a «uno» e «otto» (ventuno, ventotto…)
+        const word = (u===1||u===8) ? tw.slice(0,-1)+unitsW[u] : tw+unitsW[u];
+        NUMWORDS[word] = Number(tv)+u;
+      }
+    });
+  })();
+
+  /* ---- parser: testo -> {nome, quantita:[{n,unita}], raw} ---- */
+  function parseRiga(testo){
+    const rawStr = String(testo==null?'':testo).trim();
+    if(!rawStr) return { nome:'', quantita:[], raw:'' };
+    // R1 — il motore vocale può aggiungere punteggiatura di chiusura: la si toglie prima di tokenizzare
+    const cleaned = rawStr.replace(/[.?!…]+$/,'').trim();
+    // protegge la virgola decimale (3,5); virgole/«·»/«;» diventano connettore «e»
+    let s = cleaned.replace(/(\d),(\d)/g,'$1@D@$2').replace(/[·,;]/g,' e ').replace(/@D@/g,',');
+    const toks = s.split(/\s+/).filter(Boolean);
+    // R1 — per il confronto ogni token viene spogliato della punteggiatura di contorno
+    // (conservando la virgola decimale interna, es. «3,5»); il nome resta dai token ORIGINALI
+    const N = toks.map(t=>norm(t).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N},]+$/gu,''));
+    const numVal = (t)=>{
+      if(/^\d+(?:,\d+)?$/.test(t)) return parseFloat(t.replace(',','.'));
+      if(NUMWORDS[t]!=null) return NUMWORDS[t];
+      return null;
+    };
+    const isConn = (t)=> t==='e'||t==='ed'||t==='piu'||t==='più'||t==='';
+
+    // --- pattern «in testa»: QUANTITÀ UNITÀ di NOME ---
+    let lead=null;
+    (function(){
+      let k=0, n=null;
+      if(N[k]==='mezzo'||N[k]==='mezza'){ n=0.5; k++; }
+      else if((N[k]==='un'||N[k]==='uno'||N[k]==='una') && N[k+1]==='quarto'){ n=0.25; k+=2; if(N[k]==='di') k++; }
+      else { const v=numVal(N[k]); if(v!=null){ n=v; k++; } }
+      if(n==null) return;
+      const canon = UNIT_FORM[N[k]]; if(!canon) return; k++;
+      if(N[k]==='e' && (N[k+1]==='mezzo'||N[k+1]==='mezza')){ n+=0.5; k+=2; }
+      if(N[k]!=='di') return; k++;
+      const nome = toks.slice(k).join(' ').trim();
+      if(!nome) return;
+      lead = { nome, quantita:[{n, unita:canon}], raw:rawStr };
+    })();
+    if(lead) return lead;
+
+    // --- scansione da destra: stacca le coppie (numero, unità) ---
+    const quantita=[];
+    let i=N.length-1, consumedAny=false, pendingHalf=0;
+    while(i>=0){
+      const t=N[i];
+      if(isConn(t)){ i--; continue; }
+      const canon=UNIT_FORM[t];
+      if(canon){
+        let j=i-1, n=null;
+        if(j>=0){
+          const lt=N[j];
+          if(lt==='mezzo'||lt==='mezza'){ n=0.5; j--; }
+          else if(lt==='di' && j-1>=0 && N[j-1]==='quarto'){ n=0.25; j-=2; if(j>=0&&(N[j]==='un'||N[j]==='uno'||N[j]==='una')) j--; }
+          else if(lt==='quarto'){ n=0.25; j--; if(j>=0&&(N[j]==='un'||N[j]==='uno'||N[j]==='una')) j--; }
+          else { const v=numVal(lt); if(v!=null){ n=v; j--; } }
+        }
+        if(n==null) n=1;
+        n+=pendingHalf; pendingHalf=0;
+        quantita.unshift({n, unita:canon});
+        consumedAny=true; i=j; continue;
+      }
+      if(t==='mezzo'||t==='mezza'){ pendingHalf+=0.5; consumedAny=true; i--; continue; }
+      const v=numVal(t);
+      if(v!=null && !consumedAny){ quantita.unshift({n:v, unita:'pezzo'}); consumedAny=true; i--; break; }
+      break;
+    }
+    if(pendingHalf>0){
+      if(quantita.length) quantita[0].n+=pendingHalf;
+      else quantita.unshift({n:pendingHalf, unita:'pezzo'});
+    }
+    let nome = toks.slice(0, i+1).join(' ').replace(/\s+(e|ed|di|più|piu)\s*$/i,'').trim();
+    if(!nome && !quantita.length){ nome=rawStr; }
+    return { nome, quantita, raw:rawStr };
+  }
+
+  /* ---- formattazione quantità per il display ---- */
+  function numIt(n){ return Number.isInteger(n) ? String(n) : String(n).replace('.',','); }
+  function fmtOne(p){
+    const u=p.unita, fem=FEM.has(u), n=p.n;
+    if(n===0.5) return (fem?'mezza ':'mezzo ')+u;
+    if(n===0.25) return 'un quarto di '+u;
+    const whole=Math.floor(n), frac=+(n-whole).toFixed(2);
+    if(frac===0.5 && whole>=1){
+      const noun = whole===1 ? u : plural(u);
+      return numIt(whole)+' '+noun+' e '+(fem?'mezza':'mezzo');
+    }
+    const noun = (n===1) ? u : plural(u);
+    return numIt(n)+' '+noun;
+  }
+  function fmtQuantita(q){ if(!q||!q.length) return ''; return q.map(fmtOne).join(' + '); }
+  function qIsZero(q){ return !!(q && q.length>0 && q.every(p=>p.n===0)); }
+
+  /* ============ RICONOSCIMENTO VOCALE (Web Speech API, reale) ============ */
+  // Nessuna simulazione: il riconoscimento è reale quando il browser lo supporta e il microfono è autorizzato.
+  // Stati possibili: reale attivo/pronto · microfono non autorizzato · riconoscimento non disponibile sul browser.
+  const Speech = {
+    rec:null, supported:false, active:false, restart:false,
+    permesso:'sconosciuto',          // 'granted' | 'denied' | 'prompt' | 'sconosciuto'
+    onInterim:null, onFinal:null, onFail:null,
+    onPermChange:null,               // callback per aggiornare la UI quando cambia lo stato del permesso
+    _deniedNotified:false,           // evita di ripetere in loop il modal «microfono bloccato»
+    init(){
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if(!SR){ this.supported=false; }
+      else {
+        try{
+          const r=new SR();
+          r.lang='it-IT'; r.continuous=true; r.interimResults=true;
+          this.rec=r; this.supported=true;
+        }catch(e){ this.supported=false; this.rec=null; }
+      }
+      this._leggiPermesso();
+    },
+    // Legge lo stato del permesso microfono, se il browser espone l'API Permissions (in guardia: non ovunque).
+    _leggiPermesso(){
+      const self=this;
+      try{
+        if(navigator.permissions && navigator.permissions.query){
+          navigator.permissions.query({name:'microphone'}).then(st=>{
+            self.permesso = st.state;
+            if(st.state==='granted') self._deniedNotified=false;
+            try{ st.onchange=()=>{ self.permesso=st.state; if(st.state==='granted') self._deniedNotified=false;
+              if(typeof self.onPermChange==='function') self.onPermChange(); }; }catch(e){}
+            if(typeof self.onPermChange==='function') self.onPermChange();
+          }).catch(()=>{ self.permesso='sconosciuto'; });
+        }
+      }catch(e){ this.permesso='sconosciuto'; }
+    },
+    // Fa comparire la richiesta di autorizzazione del browser (getUserMedia). Ferma subito le tracce.
+    richiediPermesso(onOk, onKo){
+      const self=this;
+      try{
+        if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+          // Contesto non sicuro (es. file://): impossibile richiedere. Si procede lasciando avviare Speech.start().
+          self.permesso='sconosciuto'; if(onOk) onOk(); return;
+        }
+        navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+          try{ stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+          self.permesso='granted'; self._deniedNotified=false;
+          if(typeof self.onPermChange==='function') self.onPermChange();
+          if(onOk) onOk();
+        }).catch(err=>{
+          self.permesso='denied';
+          if(onKo) onKo();
+        });
+      }catch(e){ self.permesso='denied'; if(onKo) onKo(); }
+    },
+    start(onInterim, onFinal, onFail){
+      if(!this.rec){ if(onFail) onFail(); return false; }
+      this.onInterim=onInterim; this.onFinal=onFinal; this.onFail=onFail;
+      const r=this.rec, self=this;
+      r.onresult=(ev)=>{
+        let interim='';
+        for(let k=ev.resultIndex; k<ev.results.length; k++){
+          const res=ev.results[k];
+          if(res.isFinal){ const txt=(res[0].transcript||'').trim(); if(txt && self.onFinal) self.onFinal(txt); }
+          else interim+=res[0].transcript;
+        }
+        if(interim.trim() && self.onInterim) self.onInterim(interim.trim());
+      };
+      r.onerror=(ev)=>{
+        const e=ev.error;
+        if(e==='not-allowed'||e==='service-not-allowed'){
+          // Permesso negato/revocato: aggiorna stato, ferma l'ascolto, azzera i flag, mostra le istruzioni una sola volta.
+          self.permesso='denied'; self.active=false; self.restart=false;
+          S.recording=false; S.magRecording=false;
+          self.onFail=null;
+          const first=!self._deniedNotified; self._deniedNotified=true;
+          render();
+          if(first) micBloccatoModal();
+          return;
+        }
+        if(e==='audio-capture'){
+          toast('Nessun microfono disponibile');
+          self.active=false; self.restart=false; S.recording=false; S.magRecording=false; self.onFail=null; render();
+          return;
+        }
+        toast(e==='no-speech' ? 'Non ho sentito nulla' : 'Riconoscimento vocale non disponibile');
+      };
+      r.onend=()=>{
+        // Android chiude da solo la sessione: se l'utente non ha fermato, riavvia per mantenere l'ascolto continuo.
+        if(self.active && self.restart){ try{ r.start(); }catch(e){} }
+      };
+      this.active=true; this.restart=true;
+      try{ r.start(); return true; }
+      catch(e){ this.active=false; this.restart=false; if(onFail) onFail(); return false; }
+    },
+    stop(){
+      this.active=false; this.restart=false;
+      if(this.rec){ try{ this.rec.stop(); }catch(e){} }
+    }
+  };
+  Speech.init();
+
+  /* ============ ELEMENTI ============ */
+  const topbar=document.getElementById('topbar');
+  const screen=document.getElementById('screen');
+  const actionbar=document.getElementById('actionbar');
+  const app=document.getElementById('app');
+  const toastRoot=document.getElementById('toastRoot');
+
+  /* ============ TOAST / SNACKBAR ============ */
+  function toast(msg){
+    const t=document.createElement('div'); t.className='toast'; t.textContent=msg;
+    toastRoot.appendChild(t); setTimeout(()=>{ t.remove(); }, 2200);
+  }
+  function snackbar(msg, undoLabel, onUndo){
+    const s=document.createElement('div'); s.className='snackbar';
+    s.innerHTML='<span>'+esc(msg)+'</span>'; const b=document.createElement('button'); b.textContent=undoLabel;
+    let done=false;
+    b.onclick=()=>{ if(done)return; done=true; s.remove(); onUndo(); };
+    s.appendChild(b); toastRoot.appendChild(s);
+    setTimeout(()=>{ if(!done) s.remove(); }, 5000);
+  }
+
+  /* ============ OVERLAY GENERICO ============ */
+  function overlay(innerNode, opts){
+    opts=opts||{};
+    const ov=document.createElement('div'); ov.className='ov';
+    const bd=document.createElement('div'); bd.className='ov-bd';
+    if(opts.dismiss!==false) bd.onclick=()=>ov.remove();
+    ov.appendChild(bd); ov.appendChild(innerNode);
+    app.appendChild(ov);
+    return ov;
+  }
+  function bottomSheet(title, sub, items){
+    const sheet=document.createElement('div'); sheet.className='sheet';
+    let h='<div class="sheet-grab"></div>';
+    if(title) h+='<div class="sheet-title">'+esc(title)+'</div>';
+    if(sub) h+='<div class="sheet-sub">'+esc(sub)+'</div>';
+    sheet.innerHTML=h;
+    const ov=overlay(sheet);
+    items.forEach(it=>{
+      const b=document.createElement('button');
+      b.className='sheet-item'+(it.danger?' danger':'');
+      b.innerHTML=(it.icon?it.icon:'')+'<span>'+esc(it.label)+'</span>';
+      b.onclick=()=>{ ov.remove(); it.onClick&&it.onClick(); };
+      sheet.appendChild(b);
+    });
+    return ov;
+  }
+  function modal(html, actions, dismiss){
+    const m=document.createElement('div'); m.className='modal'; m.innerHTML=html;
+    const wrap=document.createElement('div'); wrap.className='modal-actions';
+    const ov=overlay(m,{dismiss:dismiss!==false});
+    actions.forEach(a=>{
+      const b=document.createElement('button'); b.className='m-btn'+(a.cls?' '+a.cls:'');
+      b.textContent=a.label; b.onclick=()=>{ ov.remove(); a.onClick&&a.onClick(); };
+      wrap.appendChild(b);
+    });
+    m.appendChild(wrap); return ov;
+  }
+
+  /* ============ EDIT INLINE ============ */
+  function inlineEdit(spanEl, onCommit){
+    const cur=spanEl.textContent;
+    const inp=document.createElement('input'); inp.className='inline-edit'; inp.value=cur;
+    spanEl.replaceWith(inp); inp.focus(); inp.select();
+    let fin=false;
+    const done=(save)=>{ if(fin)return; fin=true; const v=inp.value.trim(); onCommit(save&&v?v:cur); };
+    inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();done(true);} else if(e.key==='Escape'){done(false);} });
+    inp.addEventListener('blur',()=>done(true));
+  }
+
+  /* ============ NAV ============ */
+  function go(screenName, opts){ Object.assign(S, opts||{}); S.screen=screenName; S.magRecording=false; render(); }
+
+  /* ============ RENDER PRINCIPALE ============ */
+  let keepSpeech=false;   // se true, un re-render non ferma il riconoscimento in corso
+  let salaQtyAvvisato=false;   // R4 — avviso «le quantità vanno in magazzino» dato una volta per sessione di dettatura
+  // R3 — porta in vista la riga interessata dalla dettatura (interim o commit)
+  function scrollRowIntoView(el){
+    if(!el) return;
+    try{ el.scrollIntoView({block:'nearest', behavior: REDUCED?'auto':'smooth'}); }
+    catch(e){ try{ screen.scrollTop=screen.scrollHeight; }catch(_){} }
+  }
+  function render(){
+    clearTimers(); if(!keepSpeech) Speech.stop(); S.recording=false;
+    topbar.innerHTML=''; screen.innerHTML=''; actionbar.innerHTML='';
+    actionbar.className='actionbar hidden';
+    ({ login:renderLogin, home:renderHome, corsia:renderCorsia,
+       dettatura:renderDettatura, stock:renderStock, magazzino:renderMagazzino }[S.screen])();
+    screen.scrollTop=0;
+  }
+
+  function setTopbar(parts){
+    // parts: {back, titleHTML, subHTML, right}
+    let h='';
+    if(parts.back){ h+='<button class="iconbtn" data-act="back" aria-label="Indietro">'+IC.back+'</button>'; }
+    h+='<div class="tb-main">'+parts.titleHTML+(parts.subHTML?parts.subHTML:'')+'</div>';
+    if(parts.right) h+=parts.right;
+    topbar.innerHTML=h;
+    const bb=topbar.querySelector('[data-act="back"]'); if(bb) bb.onclick=parts.onBack;
+  }
+
+  /* ---------- LOGIN ---------- */
+  function renderLogin(){
+    S.userId=null;
+    topbar.innerHTML='<div class="tb-main"><div class="tb-title">Magazzinieri</div><div class="tb-sub">Accesso al turno</div></div>';
+    const wrap=document.createElement('div'); wrap.className='pad';
+    wrap.innerHTML='<div class="h-eyebrow">Accesso</div><div class="h1">Chi sei?</div>'+
+      '<p class="lead">Seleziona il tuo nome. Vedrai solo le corsie e le denominazioni del tuo profilo.</p><div style="height:16px"></div>';
+    const list=document.createElement('div'); list.className='list-gap';
+    [['mario','Mario','Settore Frighi'],['luca','Luca','Settore Bibite']].forEach(([id,nm,st])=>{
+      const b=document.createElement('button'); b.className='usercard';
+      b.innerHTML='<span class="av">'+nm[0]+'</span><span><span class="un">'+nm+'</span><br><span class="us">'+st+'</span></span><span class="chev">'+IC.chev+'</span>';
+      b.onclick=()=>confirmIdentity(id,nm,st);
+      list.appendChild(b);
+    });
+    wrap.appendChild(list); screen.appendChild(wrap);
+  }
+  function confirmIdentity(id,nm,st){
+    modal('<h3>Sei '+esc(nm)+'?</h3><p>Stai per accedere al profilo di <b>'+esc(nm)+'</b> — '+esc(st)+
+      '. Le modifiche che farai saranno personali e visibili solo a te.</p>',
+      [ {label:'Sì, sono '+nm, cls:'primary', onClick:()=>go('home',{userId:id, homeTab:'sala'})},
+        {label:'Cambia utente'} ]);
+  }
+
+  /* ---------- HOME ---------- */
+  function renderHome(){
+    const u=U();
+    setTopbar({
+      titleHTML:'<div class="tb-title">Ciao, '+esc(u.name)+'</div>',
+      subHTML:'<div class="tb-sub">Settore '+esc(u.settore)+'</div>',
+      right:'<button class="iconbtn" id="menuBtn" aria-label="Menu">'+IC.kebab+'</button>'
+    });
+    topbar.querySelector('#menuBtn').onclick=()=>bottomSheet(u.name+' — '+u.settore, null, [
+      {label:'Esci dal turno', icon:IC.logout, danger:true, onClick:()=>go('login')}
+    ]);
+
+    const wrap=document.createElement('div'); wrap.className='pad';
+    // Segmented Sala / Magazzino
+    const seg=document.createElement('div'); seg.className='seg';
+    seg.innerHTML='<button class="seg-btn" data-t="sala" aria-selected="'+(S.homeTab==='sala')+'">Sala espositiva</button>'+
+                  '<button class="seg-btn" data-t="mag" aria-selected="'+(S.homeTab==='mag')+'">Magazzino</button>';
+    seg.querySelector('[data-t="sala"]').onclick=()=>{ S.homeTab='sala'; render(); };
+    seg.querySelector('[data-t="mag"]').onclick=()=>go('magazzino');
+    wrap.appendChild(seg);
+    wrap.insertAdjacentHTML('beforeend','<div style="height:16px"></div><div class="h-eyebrow">Le tue corsie</div>'+
+      '<p class="lead" style="margin:4px 0 14px">Solo le corsie assegnate a te. Tocca per aprire la lista.</p>');
+    const list=document.createElement('div'); list.className='list-gap';
+    u.corsie.forEach(c=>{
+      const voci=c.scaffali.reduce((n,s)=>n+s.voci.length,0);
+      const card=document.createElement('div'); card.className='corsia-card';
+      card.setAttribute('role','button'); card.tabIndex=0;
+      card.innerHTML='<div class="cc-top"><div style="min-width:0"><div class="cc-name">'+esc(c.nome)+'</div>'+
+        '<div class="cc-meta">'+c.scaffali.length+' scaffali · '+voci+' voci</div></div>'+
+        '<button class="rowbtn cc-edit" aria-label="Rinomina corsia">'+IC.pencil+'</button>'+
+        '<span class="cc-chev">'+IC.chev+'</span></div>'+
+        '<span class="pill '+c.fresh.state+'">'+(c.fresh.state==='none'?IC.info:IC.clock)+esc(c.fresh.label)+'</span>';
+      card.querySelector('.cc-name').dataset.cid=c.id;
+      const open=()=>go('corsia',{corsiaId:c.id, mode:'modifica'});
+      card.onclick=()=>{ if(card.querySelector('.inline-edit')) return; open(); };
+      card.onkeydown=(e)=>{ if(card.querySelector('.inline-edit')) return;
+        if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); } };
+      card.querySelector('.cc-edit').onclick=(e)=>{ e.stopPropagation();
+        inlineEdit(card.querySelector('.cc-name'), v=>{ c.nome=v; render(); toast('Corsia rinominata'); }); };
+      list.appendChild(card);
+    });
+    wrap.appendChild(list);
+    // Requisito 1 — creazione di una nuova corsia dalla home
+    const newc=document.createElement('button'); newc.className='newshelf';
+    newc.style.width='100%'; newc.style.margin='14px 0 0';
+    newc.setAttribute('aria-label','Aggiungi una nuova corsia');
+    newc.innerHTML=IC.plus+'Nuova corsia';
+    newc.onclick=()=>{
+      const nc={ id:nid(), nome:'Nuova corsia', fresh:{state:'none', label:'Nessun inventario'}, scaffali:[], daAssegnare:[] };
+      U().corsie.push(nc); render();
+      const el=[...screen.querySelectorAll('.cc-name')].find(n=>n.dataset.cid===nc.id);
+      if(el) inlineEdit(el, v=>{ nc.nome=v; render(); });
+    };
+    wrap.appendChild(newc);
+    screen.appendChild(wrap);
+  }
+
+  /* ---------- CORSIA (Sala, modalità Modifica) ---------- */
+  function renderCorsia(){
+    const c=corsia();
+    setTopbar({ back:true, onBack:()=>go('home'),
+      titleHTML:'<div class="tb-title">'+esc(c.nome)+'</div>',
+      subHTML:'<div class="tb-sub">Sala espositiva · modifica</div>',
+      right:'<button class="iconbtn" id="cMenu" aria-label="Menu corsia">'+IC.kebab+'</button>' });
+    topbar.querySelector('#cMenu').onclick=()=>bottomSheet(c.nome, 'Le modifiche restano personali e locali.', [
+      {label:'Rinomina corsia', icon:IC.pencil, onClick:()=>renameCorsia(c)},
+    ]);
+
+    c.scaffali.forEach((sc,si)=> screen.appendChild(shelfBlock(sc, si)) );
+    const nb=document.createElement('button'); nb.className='newshelf';
+    nb.setAttribute('aria-label','Aggiungi un nuovo scaffale');
+    nb.innerHTML=IC.plus+'Nuovo scaffale';
+    nb.onclick=()=>{ addShelf(); };
+    screen.appendChild(nb);
+
+    // Requisito 2 — «Nuovo scaffale» sempre raggiungibile: terzo pulsante in actionbar
+    actionbar.className='actionbar';
+    actionbar.innerHTML='<button class="btn btn-rec" id="aDetta">'+IC.mic+'Detta</button>'+
+                        '<button class="btn" id="aStock">'+IC.box+'Stock</button>'+
+                        '<button class="btn" id="aNewShelf" aria-label="Nuovo scaffale">'+IC.plus+'Scaffale</button>';
+    actionbar.querySelector('#aDetta').onclick=()=>go('dettatura',{ dictSid:c.scaffali[0]?c.scaffali[0].id:null });
+    actionbar.querySelector('#aStock').onclick=()=>go('stock',{ filter:false });
+    actionbar.querySelector('#aNewShelf').onclick=()=>{ addShelf(); };
+  }
+
+  // Requisito 2 — ogni scaffale è una <section> a posizionamento relativo:
+  // il titolo sticky resta confinato al proprio blocco e viene spinto via dal successivo
+  function shelfBlock(sc, si){
+    const sec=document.createElement('section'); sec.className='shelf-sec';
+    const title=document.createElement('div'); title.className='shelf-title';
+    title.innerHTML='<span class="st-wrap">'+esc(sc.titolo)+
+      '<button class="iconbtn rowbtn st-kebab" aria-label="Menu scaffale">'+IC.kebab+'</button></span>';
+    title.querySelector('.st-kebab').onclick=(e)=>{ e.stopPropagation(); shelfMenu(sc,si); };
+    title.querySelector('.st-wrap').onclick=(e)=>{
+      if(e.target.closest('.st-kebab')) return;
+      inlineEdit(title.querySelector('.st-wrap'), v=>{ sc.titolo=v; render(); });
+    };
+    sec.appendChild(title);
+    sc.voci.forEach((v,vi)=> sec.appendChild(voceRow(sc,v,vi)) );
+    const add=document.createElement('button'); add.className='addbtn';
+    add.innerHTML=IC.plus+'Aggiungi prodotto';
+    add.onclick=()=>{ const nv={id:nid(),nome:'Nuovo prodotto'}; sc.voci.push(nv); render();
+      // apri subito in edit l'ultima riga
+      const rows=screen.querySelectorAll('.voce-name'); const last=[...rows].find(r=>r.dataset.vid===nv.id);
+      if(last) inlineEdit(last, val=>{ nv.nome=val; render(); }); };
+    sec.appendChild(add);
+    return sec;
+  }
+
+  function voceRow(sc,v,vi){
+    const row=document.createElement('div'); row.className='voce';
+    const name=document.createElement('div'); name.className='voce-name'; name.textContent=v.nome; name.dataset.vid=v.id;
+    name.onclick=()=>inlineEdit(name, val=>{ v.nome=val; render(); });
+    const px=document.createElement('button'); px.className='rowbtn'; px.innerHTML=IC.pencil; px.setAttribute('aria-label','Modifica testo');
+    px.onclick=()=>inlineEdit(name, val=>{ v.nome=val; render(); });
+    const kb=document.createElement('button'); kb.className='rowbtn'; kb.setAttribute('aria-label','Azioni riga'); kb.innerHTML=IC.kebab;
+    kb.onclick=()=>rowMenu(sc,v,vi);
+    row.appendChild(name); row.appendChild(px); row.appendChild(kb);
+    return row;
+  }
+
+  function rowMenu(sc,v,vi){
+    bottomSheet(v.nome, null, [
+      {label:'Modifica testo', icon:IC.pencil, onClick:()=>{
+        const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.vid===v.id);
+        if(el) inlineEdit(el, val=>{ v.nome=val; render(); }); }},
+      {label:'Sposta su', icon:IC.up, onClick:()=>{ if(vi>0){ sc.voci.splice(vi,1); sc.voci.splice(vi-1,0,v); render(); } }},
+      {label:'Sposta giù', icon:IC.down, onClick:()=>{ if(vi<sc.voci.length-1){ sc.voci.splice(vi,1); sc.voci.splice(vi+1,0,v); render(); } }},
+      {label:'Elimina', icon:IC.trash, danger:true, onClick:()=>confirmDeleteVoce(sc,v,vi)},
+    ]);
+  }
+  function confirmDeleteVoce(sc,v,vi){
+    // Attrito leggero: conferma singola + snackbar Annulla (cancellazione differita)
+    modal('<h3>Eliminare «'+esc(v.nome)+'»?</h3><p>Puoi annullare subito dopo. L\'azione riguarda solo la tua versione della lista.</p>',
+      [ {label:'Annulla'},
+        {label:'Elimina', cls:'danger', onClick:()=>{
+          const idx=sc.voci.indexOf(v); sc.voci.splice(idx,1); render();
+          snackbar('«'+v.nome+'» eliminato', 'Annulla', ()=>{ sc.voci.splice(Math.min(idx,sc.voci.length),0,v); render(); });
+        }} ]);
+  }
+
+  function shelfMenu(sc,si){
+    const c=corsia();
+    bottomSheet(sc.titolo, 'Scaffale (capitolo)', [
+      {label:'Rinomina scaffale', icon:IC.pencil, onClick:()=>{
+        const el=screen.querySelector('.shelf-title .st-wrap');
+        // rinomina via inline sull'elemento corretto
+        const titles=[...screen.querySelectorAll('.shelf-title')];
+        const t=titles[si]; if(t) inlineEdit(t.querySelector('.st-wrap'), v=>{ sc.titolo=v; render(); }); }},
+      {label:'Sposta scaffale su', icon:IC.up, onClick:()=>{ if(si>0){ c.scaffali.splice(si,1); c.scaffali.splice(si-1,0,sc); render(); } }},
+      {label:'Sposta scaffale giù', icon:IC.down, onClick:()=>{ if(si<c.scaffali.length-1){ c.scaffali.splice(si,1); c.scaffali.splice(si+1,0,sc); render(); } }},
+      {label:'Elimina scaffale', icon:IC.trash, danger:true, onClick:()=>confirmDeleteShelf(c,sc,si)},
+    ]);
+  }
+  function confirmDeleteShelf(c,sc,si){
+    // Attrito forte: nomina il conteggio prodotti (§4.2-bis)
+    const n=sc.voci.length;
+    modal('<h3>Eliminare lo scaffale «'+esc(sc.titolo)+'»?</h3><p>Verranno rimossi anche i suoi <b>'+n+' prodotti</b>. L\'azione riguarda solo la tua versione delle liste.</p>',
+      [ {label:'Annulla'},
+        {label:'Sì, elimina scaffale e '+n+' prodotti', cls:'danger', onClick:()=>{
+          c.scaffali.splice(si,1); render();
+          snackbar('Scaffale «'+sc.titolo+'» eliminato', 'Annulla', ()=>{ c.scaffali.splice(si,0,sc); render(); });
+        }} ]);
+  }
+  function addShelf(){
+    const c=corsia(); const ns={id:nid(), titolo:'Nuovo scaffale', voci:[]}; c.scaffali.push(ns); render();
+    screen.scrollTop=screen.scrollHeight;   // porta in vista il nuovo scaffale in fondo
+    const titles=[...screen.querySelectorAll('.shelf-title')]; const t=titles[titles.length-1];
+    if(t) inlineEdit(t.querySelector('.st-wrap'), v=>{ ns.titolo=v; render(); });
+  }
+  function renameCorsia(c){
+    modal('<h3>Rinomina corsia</h3><p>Nome attuale: <b>'+esc(c.nome)+'</b></p>',
+      [ {label:'Continua', cls:'primary', onClick:()=>{
+          // apri edit sul titolo topbar
+          const t=topbar.querySelector('.tb-title');
+          inlineEdit(t, v=>{ c.nome=v; render(); toast('Corsia rinominata'); }); }},
+        {label:'Annulla'} ]);
+  }
+
+  /* ============ MICROFONO: STATO E AUTORIZZAZIONE ============ */
+  // Se il prototipo gira dentro un riquadro incorporato (es. il visualizzatore di claude.ai),
+  // il sito ospite può bloccare il microfono a monte: la richiesta di consenso non compare proprio.
+  const INCORPORATO=(()=>{ try{ return window.self!==window.top; }catch(e){ return true; } })();
+  // Badge veritiero sullo stato del riconoscimento. kind: 'sala' | 'mag' (aggiunge « · o tastiera»).
+  function speechBadge(kind){
+    const tail = kind==='mag' ? ' · o tastiera' : '';
+    if(!Speech.supported)
+      return '<span class="dict-sim">'+IC.info+'Riconoscimento non disponibile su questo browser'+tail+'</span>';
+    if(Speech.permesso==='denied')
+      return '<span class="dict-sim">'+IC.info+(INCORPORATO
+        ? 'Microfono bloccato dalla pagina che ospita il prototipo'
+        : 'Microfono non autorizzato')+tail+'</span>';
+    return '<span class="dict-sim" style="color:var(--ok);background:var(--ok-bg)">'+IC.mic+'Riconoscimento vocale reale (italiano)'+tail+'</span>';
+  }
+  // Pulsante grande «Autorizza il microfono»: al tocco chiede il permesso; ok→onOk, negato→istruzioni.
+  function micAuthButton(onOk){
+    const b=document.createElement('button'); b.className='mic-auth';
+    b.setAttribute('aria-label','Autorizza il microfono');
+    b.innerHTML='<span class="ma-emoji">🎙</span><span class="ma-txt"><b>Autorizza il microfono</b>'+
+      '<small>Per dettare serve il permesso del microfono. Tocca per autorizzarlo.</small></span>';
+    b.onclick=()=>Speech.richiediPermesso(onOk, ()=>micBloccatoModal());
+    return b;
+  }
+  // Istruzioni pratiche quando il microfono è bloccato per la pagina.
+  function micBloccatoModal(){
+    if(INCORPORATO){
+      modal('<h3>Microfono bloccato dalla pagina ospite</h3><p>Stai usando il prototipo <b>dentro un\'altra pagina</b> '+
+        '(ad esempio il visualizzatore di claude.ai), che <b>non concede il microfono</b> ai contenuti incorporati: '+
+        'la richiesta di consenso non può nemmeno comparire, e per questo non trovi nessuna voce nelle impostazioni. '+
+        'Non dipende da te né dall\'app.</p><p>Per provare la dettatura apri il prototipo <b>direttamente</b>: '+
+        'sul computer fai doppio clic sul file <b>prototipo\\app-demo.html</b>; sul telefono aprilo con <b>Chrome</b> '+
+        'da un indirizzo diretto (non incorporato).</p>',
+        [ {label:'Ho capito', cls:'primary'} ]);
+      return;
+    }
+    modal('<h3>Microfono bloccato</h3><p>Il microfono è bloccato per questa pagina. Aprilo dalle impostazioni del sito: '+
+      'tocca il <b>lucchetto</b> nella barra dell\'indirizzo → <b>Autorizzazioni</b> → <b>Microfono</b> → <b>Consenti</b>, poi riprova.</p>',
+      [ {label:'Ho capito', cls:'primary'} ]);
+  }
+  // Aggiorna la UI quando cambia lo stato del permesso, senza interrompere una dettatura in corso.
+  function refreshPermUI(){
+    if(S.recording || S.magRecording) return;
+    if(S.screen==='dettatura' || S.screen==='magazzino') render();
+  }
+  Speech.onPermChange = refreshPermUI;
+
+  /* ---------- DETTATURA (Sala, riconoscimento vocale reale) ---------- */
+  function renderDettatura(){
+    const c=corsia();
+    if(!S.dictSid && c.scaffali[0]) S.dictSid=c.scaffali[0].id;
+    const sc=scaffOf(S.dictSid) || c.scaffali[0];
+    setTopbar({
+      titleHTML:'<div class="tb-title tb-rec"><span class="rec-live" style="width:10px;height:10px;border-radius:50%;background:var(--rec);display:inline-block"></span>'+
+        (S.recording?'In ascolto…':'Dettatura')+'</div>',
+      subHTML:'<div class="tb-sub">'+esc(c.nome)+' · '+(sc?esc(sc.titolo):'')+'</div>'
+    });
+
+    const area=document.createElement('div');
+    area.innerHTML='<div class="dict-area">'+speechBadge('sala')+'</div>';
+    // Lista scaffale attivo con le sue voci (tap = correzione ibrida da tastiera)
+    const block=document.createElement('div');
+    if(sc){
+      const title=document.createElement('div'); title.className='shelf-title'; title.textContent=sc.titolo;
+      block.appendChild(title);
+      sc.voci.forEach(v=>{
+        const row=document.createElement('div'); row.className='voce';
+        const nm=document.createElement('div'); nm.className='voce-name'; nm.textContent=v.nome; nm.dataset.vid=v.id;
+        nm.onclick=()=>inlineEdit(nm, val=>{ v.nome=val; render(); });
+        const px=document.createElement('button'); px.className='rowbtn'; px.innerHTML=IC.pencil; px.setAttribute('aria-label','Correggi da tastiera');
+        px.onclick=()=>inlineEdit(nm, val=>{ v.nome=val; render(); });
+        row.appendChild(nm); row.appendChild(px); block.appendChild(row);
+      });
+      // riga provvisoria (compilata durante la dettatura)
+      const prov=document.createElement('div'); prov.className='voce'; prov.id='provRow'; prov.style.display='none';
+      prov.innerHTML='<div class="voce-name provisional" id="provText"></div>';
+      block.appendChild(prov);
+    }
+    // Percorso di autorizzazione / avviso di incompatibilità (in base allo stato reale del microfono)
+    if(!Speech.supported){
+      block.insertAdjacentHTML('beforeend','<div class="dict-info">Il riconoscimento vocale non è disponibile su questo browser. '+
+        'Usa Chrome su Android. Puoi comunque inserire le voci con la tastiera.</div>');
+    } else if(Speech.permesso!=='granted' && !S.recording){
+      block.appendChild(micAuthButton(()=>startDictation()));   // permesso concesso → avvia subito la dettatura
+    }
+
+    // Microfono grande
+    const micDisabled = !Speech.supported;
+    const mic=document.createElement('div'); mic.className='mic-wrap';
+    mic.innerHTML='<button class="mic-btn'+(S.recording?' rec':'')+'" id="micBtn"'+
+      (micDisabled?' aria-disabled="true" style="opacity:.5;cursor:default"':'')+
+      ' aria-label="'+(S.recording?'Ferma dettatura':'Avvia dettatura')+'">'+IC.mic+'</button>'+
+      '<div class="mic-label'+(S.recording?' on':'')+'" id="micLabel">'+
+      (micDisabled?'Riconoscimento non disponibile':(S.recording?'In ascolto — tocca per fermare':'Tocca il microfono per dettare'))+'</div>';
+
+    area.appendChild(block); area.appendChild(document.createElement('div')).style.height='10px'; area.appendChild(mic);
+    screen.appendChild(area);
+    if(!micDisabled) document.getElementById('micBtn').onclick=toggleDictation;
+
+    actionbar.className='actionbar';
+    actionbar.innerHTML='<button class="btn" id="dNew">'+IC.plus+'Nuovo scaffale</button>'+
+                        '<button class="btn btn-primary" id="dFine">'+IC.check+'Fine</button>';
+    actionbar.querySelector('#dNew').onclick=()=>{ manualNewShelf(); };
+    actionbar.querySelector('#dFine').onclick=()=>{ go('corsia'); };
+  }
+
+  function toggleDictation(){
+    if(S.recording){ stopDictation(); return; }
+    if(!Speech.supported){ return; }                         // mic disabilitato: nessuna azione
+    if(Speech.permesso==='granted'){ startDictation(); return; }
+    // Permesso non concesso: passa dalla richiesta prima di Speech.start()
+    Speech.richiediPermesso(()=>startDictation(), ()=>micBloccatoModal());
+  }
+  // Avvio effettivo del riconoscimento vocale reale di sala
+  function startDictation(){
+    if(!Speech.supported || S.recording) return;
+    salaQtyAvvisato=false;                                    // R4 — nuova sessione: l'avviso quantità torna a poter comparire
+    S.recording=true; renderDettaturaKeep();                 // aggiorna badge/label e nasconde il box «Autorizza»
+    Speech.start(
+      (interim)=>{ showProv(interim); },
+      (finalTxt)=>{ handleSalaFinal(finalTxt); },
+      ()=>{ S.recording=false; renderDettaturaKeep(); }       // avvio fallito: torna allo stato di riposo
+    );
+  }
+  // gestione di ogni risultato «finale» della dettatura di sala
+  function handleSalaFinal(txt){
+    hideProv();
+    const n=norm(txt);
+    if(n==='nuovo scaffale' || n==='crea nuovo scaffale' || n==='apri nuovo scaffale'){
+      (async()=>{ const ok=await microConfirm(); if(ok){ doNewShelf(); } })();
+      return;
+    }
+    // R4 — le quantità appartengono all'inventario di magazzino: in sala si salva solo il nome
+    const p=parseRiga(txt);
+    if(p.quantita.length>0){
+      if(!p.nome || !p.nome.trim()){
+        toast('Qui si detta il nome del prodotto; le quantità vanno in Magazzino');
+        return;
+      }
+      commitVoce(cap(p.nome));
+      if(!salaQtyAvvisato){ salaQtyAvvisato=true;
+        toast('Le quantità si dettano in Magazzino: qui ho salvato solo il nome'); }
+      return;
+    }
+    commitVoce(cap(txt));
+  }
+  function stopDictation(){ S.recording=false; Speech.stop(); clearTimers(); refreshMic(); hideProv(); }
+  function refreshMic(){
+    const b=document.getElementById('micBtn'), l=document.getElementById('micLabel');
+    if(!b) return;
+    b.classList.toggle('rec', S.recording);
+    l.classList.toggle('on', S.recording);
+    l.textContent = S.recording ? 'In ascolto — tocca per fermare' : 'Tocca il microfono per dettare';
+    const rl=topbar.querySelector('.tb-rec'); if(rl) rl.childNodes[1].nodeValue = S.recording?'In ascolto…':'Dettatura';
+  }
+  function showProv(txt){ const r=document.getElementById('provRow'), t=document.getElementById('provText');
+    if(r){ r.style.display='flex'; t.textContent=txt; scrollRowIntoView(r); } }
+  function hideProv(){ const r=document.getElementById('provRow'); if(r){ r.style.display='none'; } }
+
+  function commitVoce(text){
+    const sc=scaffOf(S.dictSid); if(!sc) return;
+    const v={id:nid(), nome:text}; sc.voci.push(v);
+    // re-render dettatura mantenendo stato
+    renderDettaturaKeep();
+    // flash sull'ultima riga
+    const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.vid===v.id);
+    if(el){
+      if(!REDUCED) el.closest('.voce').classList.add('flash');
+      scrollRowIntoView(el.closest('.voce'));   // R3 — la visuale segue la riga appena committata
+    }
+  }
+  // re-render leggero della dettatura senza resettare timers/recording
+  function renderDettaturaKeep(){
+    const wasRec=S.recording; topbar.innerHTML=''; screen.innerHTML=''; actionbar.innerHTML='';
+    actionbar.className='actionbar hidden';
+    // ricostruisci ma preserva recording flag
+    const savedTimers=TIMERS; TIMERS=[]; // non azzerare i timeout in corso
+    renderDettatura(); TIMERS=savedTimers.concat(TIMERS); S.recording=wasRec; refreshMic();
+  }
+  function microConfirm(){
+    return new Promise(resolve=>{
+      const box=document.createElement('div'); box.className='cmd-confirm';
+      box.innerHTML='<div class="ct">Nuovo scaffale? Dillo di nuovo o tocca ✓ — oppure continua a dettare</div>'+
+        '<button id="mcOk">'+IC.check+'</button>';
+      screen.querySelector('.dict-area').after(box);
+      let settled=false;
+      // Conferma reale: tocco su ✓ (oppure ripetere il comando vocale, gestito da handleSalaFinal).
+      box.querySelector('#mcOk').onclick=()=>{ if(settled)return; settled=true; box.remove(); resolve(true); };
+    });
+  }
+  function doNewShelf(){
+    const c=corsia(); const ns={id:nid(), titolo:'Nuovo scaffale', voci:[]}; c.scaffali.push(ns);
+    S.dictSid=ns.id; renderDettaturaKeep(); toast('Nuovo scaffale creato');
+  }
+  function manualNewShelf(){
+    const c=corsia(); const ns={id:nid(), titolo:'Nuovo scaffale', voci:[]}; c.scaffali.push(ns);
+    S.dictSid=ns.id; const wasRec=S.recording; render(); S.recording=wasRec; refreshMic();
+    toast('Nuovo scaffale creato');
+  }
+
+  /* ---------- STOCK / RISCONTRO (Consultazione in sala) ---------- */
+  // Requisito 5 — aggancio dinamico listino (sala) ↔ magazzino (inventario) per NOME
+  function mergeQ(a,b){
+    const out=(a||[]).map(x=>({n:x.n, unita:x.unita}));
+    (b||[]).forEach(p=>{ const e=out.find(x=>x.unita===p.unita); if(e) e.n+=p.n; else out.push({n:p.n, unita:p.unita}); });
+    return out;
+  }
+  function buildInvMap(inv){
+    const map={};
+    (inv.righe||[]).forEach(r=>{
+      const key=norm(r.nome); if(!key) return;
+      if(!map[key]) map[key]={ quantita:mergeQ([], r.quantita), righe:[r] };
+      else { map[key].quantita=mergeQ(map[key].quantita, r.quantita); map[key].righe.push(r); }
+    });
+    return map;
+  }
+  // riscontro di una voce di sala: prima l'aggancio manuale (linkId), poi il nome
+  function resolveMatch(v, inv, map){
+    if(v.linkId){
+      const r=(inv.righe||[]).find(x=>x.id===v.linkId);
+      if(r) return { quantita:r.quantita||[], rigaIds:[r.id] };
+    }
+    const m=map[norm(v.nome)];
+    if(m) return { quantita:m.quantita, rigaIds:m.righe.map(r=>r.id) };
+    return null;
+  }
+  function renderStock(){
+    const c=corsia(); const inv=U().inv;
+    const map=buildInvMap(inv);
+    // conteggi complessivi (non filtrati) e insieme delle righe di magazzino agganciate
+    let agganci=0, senza=0; const used=new Set();
+    c.scaffali.forEach(sc=> sc.voci.forEach(v=>{
+      const m=resolveMatch(v, inv, map);
+      if(m){ agganci++; m.rigaIds.forEach(id=>used.add(id)); } else senza++;
+    }));
+    const hasData=(inv.righe||[]).length>0;
+
+    setTopbar({ back:true, onBack:()=>go('corsia'),
+      titleHTML:'<div class="tb-title">'+esc(c.nome)+'</div>',
+      subHTML:'<div class="tb-sub">Riscontro magazzino · '+esc(c.fresh.label.replace('Inventario: ',''))+'</div>',
+      right:'<button class="iconbtn" id="fBtn" aria-label="Filtro mancanti" style="width:auto;padding:0 12px;font-weight:700;font-size:13px;'+
+        (S.filter?'color:var(--blu)':'color:var(--ink2)')+'">Solo mancanti</button>' });
+    topbar.querySelector('#fBtn').onclick=()=>{ S.filter=!S.filter; render(); };
+
+    const note=document.createElement('div'); note.className='stock-note';
+    note.innerHTML = hasData
+      ? IC.box+esc(agganci+' voci agganciate · '+senza+' senza riscontro dal magazzino')
+      : IC.box+'Nessun inventario abbinato a questa corsia';
+    screen.appendChild(note);
+
+    if(!hasData){
+      screen.insertAdjacentHTML('beforeend','<div class="empty-note">Concludi un inventario in Magazzino per vedere qui le quantità riscontrate sotto ogni scaffale.</div>');
+    }
+
+    // LISTINO nell'ordine di inserimento — mai riordinato
+    c.scaffali.forEach(sc=>{
+      const rows=[];
+      sc.voci.forEach(v=>{
+        const m=resolveMatch(v, inv, map);
+        const has=!!m, zero=has && qIsZero(m.quantita);
+        if(S.filter && !(zero || !has)) return;   // «Solo mancanti»: riscontro 0 o assente
+        rows.push(stockRow(v, m, has, zero));
+      });
+      if(!rows.length) return;
+      const title=document.createElement('div'); title.className='shelf-title'; title.textContent=sc.titolo;
+      screen.appendChild(title);
+      rows.forEach(r=>screen.appendChild(r));
+    });
+
+    // Sezione finale: righe di magazzino che non agganciano alcuna voce di sala
+    const soli=(inv.righe||[]).filter(r=>!used.has(r.id));
+    if(soli.length && !S.filter){
+      screen.insertAdjacentHTML('beforeend','<div class="section-h">Solo in magazzino · non nel listino</div>');
+      soli.forEach(r=>{
+        const row=document.createElement('div'); row.className='da-item';
+        // stessa semantica di «esaurito» di stockRow(): una riga a quantità zero non è un badge verde
+        const zero=qIsZero(r.quantita);
+        const q=zero ? '0 · esaurito' : (fmtQuantita(r.quantita)||'presente');
+        row.innerHTML='<span class="stockbadge '+(zero?'zero':'has')+'">'+IC.box+esc(q)+'</span><span class="n">'+esc(r.nome)+'</span>';
+        const btn=document.createElement('button'); btn.className='assign-btn'; btn.textContent='Assegna';
+        btn.setAttribute('aria-label','Aggancia «'+r.nome+'» a una voce di sala');
+        btn.onclick=()=>assignSheet(c, r); row.appendChild(btn); screen.appendChild(row);
+      });
+    }
+
+    actionbar.className='actionbar';
+    actionbar.innerHTML='<button class="btn btn-primary" id="sBack">'+IC.back+'Torna a modifica</button>';
+    actionbar.querySelector('#sBack').onclick=()=>go('corsia');
+  }
+  function stockRow(v, m, has, zero){
+    const row=document.createElement('div'); row.className='voce';
+    const nm=document.createElement('div'); nm.className='voce-name'; nm.style.cursor='default'; nm.textContent=v.nome;
+    row.appendChild(nm);
+    if(!has){
+      row.insertAdjacentHTML('beforeend','<span class="stockbadge nodata" style="font-size:12px;font-weight:650;white-space:normal;text-align:right;max-width:56%">Nessun riscontro dal magazzino</span>');
+    } else if(zero){
+      row.insertAdjacentHTML('beforeend','<span class="miss-dot"></span><span class="stockbadge zero">'+IC.box+'0 · esaurito</span>');
+    } else {
+      row.insertAdjacentHTML('beforeend','<span class="stockbadge has">'+IC.box+esc(fmtQuantita(m.quantita)||'presente')+'</span>');
+    }
+    return row;
+  }
+  // «Assegna»: aggancio manuale voce→riga (imposta v.linkId, senza rinominare)
+  function assignSheet(c, riga){
+    const items=[];
+    c.scaffali.forEach(sc=> sc.voci.forEach(v=> items.push({
+      label:v.nome+'  ('+sc.titolo+')',
+      onClick:()=>{ v.linkId=riga.id; render(); toast('«'+riga.nome+'» agganciato a '+v.nome); }
+    })));
+    bottomSheet('Assegna «'+riga.nome+'»', 'Scegli la voce di sala a cui agganciare questa riga di magazzino (senza rinominarla).', items);
+  }
+
+  /* ---------- MAGAZZINO (Inventario) ---------- */
+  function renderMagazzino(){
+    const u=U(); const inv=u.inv;
+    setTopbar({ back:true, onBack:()=>go('home',{homeTab:'sala'}),
+      titleHTML:'<div class="tb-title">Magazzino</div>',
+      subHTML:'<div class="tb-sub">Settore '+esc(u.settore)+'</div>' });
+
+    if(inv.active){
+      const banner=document.createElement('div'); banner.className='inv-banner';
+      banner.innerHTML='<span class="rec-live"></span><span class="txt"><b>Inventario in corso</b>'+
+        '<small>'+esc(inv.settore)+' · iniziato '+esc(inv.iniziata)+'</small></span>'+
+        '<span class="inv-count">'+inv.righe.length+'</span>';
+      screen.appendChild(banner);
+
+      const wrap=document.createElement('div');
+      const hint=document.createElement('div'); hint.className='dict-area';
+      hint.innerHTML= S.magRecording
+        ? '<span class="dict-sim" style="color:var(--rec);background:var(--mancante-bg)"><span class="rec-live" style="width:9px;height:9px;border-radius:50%;background:var(--rec);display:inline-block"></span>In ascolto — dettatura in corso…</span>'
+        : speechBadge('mag');
+      wrap.appendChild(hint);
+      // Percorso di autorizzazione / avviso di incompatibilità del microfono
+      if(!Speech.supported){
+        wrap.insertAdjacentHTML('beforeend','<div class="dict-info">Il riconoscimento vocale non è disponibile su questo browser. '+
+          'Usa Chrome su Android. Puoi comunque inserire le voci con la tastiera.</div>');
+      } else if(Speech.permesso!=='granted' && !S.magRecording){
+        wrap.appendChild(micAuthButton(()=>startMagDictation()));   // permesso concesso → avvia subito la dettatura
+      }
+      inv.righe.forEach(r=> wrap.appendChild(magRow(r)) );
+      // R3 — riga provvisoria: mostra in diretta ciò che il motore sta scrivendo (solo durante l'ascolto)
+      const mprov=document.createElement('div'); mprov.className='voce'; mprov.id='magProvRow'; mprov.style.display='none';
+      mprov.innerHTML='<div class="voce-name provisional" id="magProvText"></div>';
+      wrap.appendChild(mprov);
+      const add=document.createElement('button'); add.className='addbtn'; add.innerHTML=IC.plus+'Aggiungi voce';
+      add.onclick=()=>{ const nr={id:nid(), nome:'Nuova voce', quantita:[], raw:'Nuova voce'}; inv.righe.push(nr); render();
+        const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.rid===nr.id);
+        if(el) editMagRow(el, nr); };
+      wrap.appendChild(add);
+      screen.appendChild(wrap);
+
+      actionbar.className='actionbar col';
+      const dettaDisabled = !Speech.supported;
+      actionbar.innerHTML=
+        '<div style="display:flex;gap:10px;width:100%">'+
+          '<button class="btn btn-rec" id="mDetta"'+(dettaDisabled?' aria-disabled="true" style="opacity:.5;cursor:default"':'')+'>'+IC.mic+(S.magRecording?'Ferma':'Detta')+'</button>'+
+          '<button class="btn btn-primary" id="mClose">'+IC.check+'Concludi</button>'+
+        '</div>'+
+        '<button class="btn btn-danger-soft" id="mNew">'+IC.trash+'Nuovo inventario (cancella il precedente)</button>';
+      if(!dettaDisabled) actionbar.querySelector('#mDetta').onclick=()=>magDictate();
+      actionbar.querySelector('#mClose').onclick=()=>closeInventory();
+      actionbar.querySelector('#mNew').onclick=()=>newInventoryDialog();
+    } else {
+      screen.insertAdjacentHTML('beforeend','<div class="empty-note" style="padding-top:40px">Nessun inventario in corso per il settore <b>'+esc(u.settore)+'</b>.<br>Avvia una nuova sessione per iniziare a elencare i prodotti.</div>');
+      actionbar.className='actionbar';
+      actionbar.innerHTML='<button class="btn btn-primary" id="mStart">'+IC.plus+'Nuovo inventario</button>';
+      actionbar.querySelector('#mStart').onclick=()=>{ inv.active=true; inv.iniziata='10:15'; render(); toast('Inventario avviato'); };
+    }
+  }
+  function magRow(r){
+    const row=document.createElement('div'); row.className='voce';
+    const nm=document.createElement('div'); nm.className='voce-name'; nm.dataset.rid=r.id;
+    const q=fmtQuantita(r.quantita);
+    nm.textContent = q ? (r.nome+' — '+q) : r.nome;   // «nome — 2 cartoni + 5 pezzi»
+    nm.onclick=()=>editMagRow(nm, r);
+    const kb=document.createElement('button'); kb.className='rowbtn'; kb.innerHTML=IC.trash; kb.setAttribute('aria-label','Elimina voce');
+    kb.onclick=()=>{ const inv=U().inv; const i=inv.righe.indexOf(r); inv.righe.splice(i,1); render();
+      snackbar('Voce eliminata','Annulla',()=>{ inv.righe.splice(i,0,r); render(); }); };
+    row.appendChild(nm); row.appendChild(kb); return row;
+  }
+  // correzione inline: si modifica il testo grezzo e si riesegue parseRiga
+  function editMagRow(nm, r){
+    const inp=document.createElement('input'); inp.className='inline-edit'; inp.value=r.raw||r.nome;
+    nm.replaceWith(inp); inp.focus(); inp.select();
+    let fin=false;
+    const done=(save)=>{ if(fin)return; fin=true; const v=inp.value.trim();
+      if(save && v){ const p=parseRiga(v); r.nome=cap(p.nome); r.quantita=p.quantita; r.raw=v; }
+      render(); };
+    inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();done(true);} else if(e.key==='Escape'){done(false);} });
+    inp.addEventListener('blur',()=>done(true));
+  }
+  function magDictate(){
+    if(S.magRecording){ Speech.stop(); S.magRecording=false; render(); return; }  // toggle: ferma
+    if(!Speech.supported){ return; }                          // pulsante disabilitato: nessuna azione
+    if(Speech.permesso==='granted'){ startMagDictation(); return; }
+    // Permesso non concesso: passa dalla richiesta prima di Speech.start()
+    Speech.richiediPermesso(()=>startMagDictation(), ()=>micBloccatoModal());
+  }
+  // Avvio effettivo del riconoscimento vocale reale in magazzino
+  function startMagDictation(){
+    if(!Speech.supported || S.magRecording) return;
+    S.magRecording=true; render();
+    Speech.start(
+      (interim)=>{ showMagProv(interim); },                     // R3 — anteprima in diretta anche in magazzino
+      (finalTxt)=>{ hideMagProv(); magCommit(finalTxt); },
+      ()=>{ S.magRecording=false; render(); }                  // avvio fallito: torna allo stato di riposo
+    );
+  }
+  // R3 — riga provvisoria di magazzino (ricreata nascosta ad ogni render: si riespone al prossimo interim)
+  function showMagProv(txt){ const r=document.getElementById('magProvRow'), t=document.getElementById('magProvText');
+    if(r){ r.style.display='flex'; t.textContent=txt; scrollRowIntoView(r); } }
+  function hideMagProv(){ const r=document.getElementById('magProvRow'); if(r){ r.style.display='none'; } }
+  // R3 — re-render leggero (Speech attivo) + flash e scorrimento sulla riga interessata
+  function flashMagRow(id){
+    keepSpeech=true; render(); keepSpeech=false;
+    const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.rid===id);
+    if(el){
+      if(!REDUCED) el.closest('.voce').classList.add('flash');
+      scrollRowIntoView(el.closest('.voce'));
+    }
+  }
+  // un risultato finale reale -> parseRiga -> oggetto strutturato in inv.righe
+  function magCommit(txt){
+    const inv=U().inv; const p=parseRiga(txt);
+    const nomeVuoto = !p.nome || !p.nome.trim();
+    const last = inv.righe.length ? inv.righe[inv.righe.length-1] : null;
+
+    // R2 — quantità dette DOPO una pausa (risultato finale separato, senza nome): allacciarle all'ultima riga
+    if(nomeVuoto && p.quantita.length>0){
+      if(last){
+        last.quantita = mergeQ(last.quantita, p.quantita);     // stessa unità: somma; altrimenti nuova coppia
+        last.raw = (last.raw ? last.raw+' ' : '') + txt;
+        flashMagRow(last.id);
+        return;
+      }
+      toast('Di\' prima il nome del prodotto');                // nessuna riga a cui allacciare
+      return;
+    }
+    // R2 (simmetrico) — nome detto dopo, per completare un'ultima riga rimasta senza nome ma con quantità
+    if(!nomeVuoto && p.quantita.length===0 && last && (!last.nome || !last.nome.trim()) && last.quantita.length>0){
+      last.nome = cap(p.nome);
+      last.raw = (last.raw ? last.raw+' ' : '') + txt;
+      flashMagRow(last.id);
+      return;
+    }
+
+    const nr={id:nid(), nome:cap(p.nome), quantita:p.quantita, raw:txt};
+    inv.righe.push(nr);
+    flashMagRow(nr.id);
+  }
+  function newInventoryDialog(){
+    const inv=U().inv;
+    modal('<h3>Iniziare un nuovo inventario?</h3><p>Il tuo inventario precedente di <b>'+esc(inv.settore)+
+      '</b> (creato il <b>'+esc(inv.prevData)+'</b>, <b>'+inv.prevCount+' voci</b>) verrà cancellato definitivamente. '+
+      'Gli inventari degli altri magazzinieri non sono toccati.</p>',
+      [ {label:'Continua l\'inventario esistente'},
+        {label:'Annulla'},
+        {label:'Sì, cancella e inizia', cls:'danger', onClick:()=>{
+          inv.righe=[]; inv.prevData='oggi'; inv.iniziata='10:15'; render();
+          toast('Nuovo inventario avviato — il precedente si cancella al primo salvataggio'); }} ]);
+  }
+  function closeInventory(){
+    const inv=U().inv; if(!inv.righe.length){ toast('Aggiungi almeno una voce'); return; }
+    const c=U().corsie[0]; c.fresh={state:'fresh', label:'Inventario: oggi 10:31'};
+    // riepilogo calcolato dall'aggancio dinamico per nome sulla prima corsia
+    const map=buildInvMap(inv); let agg=0, senza=0; const used=new Set();
+    c.scaffali.forEach(sc=> sc.voci.forEach(v=>{
+      const m=resolveMatch(v, inv, map);
+      if(m){ agg++; m.rigaIds.forEach(id=>used.add(id)); } else senza++;
+    }));
+    const soli=(inv.righe||[]).filter(r=>!used.has(r.id)).length;
+    modal('<h3>Inventario riordinato</h3><p><b>'+inv.righe.length+'</b> voci elaborate.<br>'+
+      'Agganciate al listino di sala: <b>'+agg+'</b> · '+
+      'Voci di sala senza riscontro: <b>'+senza+'</b> · '+
+      'Solo in magazzino: <b>'+soli+'</b>.</p>',
+      [ {label:'Vai alla consultazione in sala', cls:'primary', onClick:()=>{ go('corsia',{corsiaId:U().corsie[0].id});
+          setTimeout(()=>go('stock',{filter:false}),10); }},
+        {label:'Torna alla home', onClick:()=>go('home',{homeTab:'sala'}) } ], false);
+    toast('Inventario chiuso e riordinato');
+  }
+
+  /* ============ AVVIO ============ */
+  try{ const d=new Date(); document.getElementById('clock').textContent=
+    d.getHours()+':'+String(d.getMinutes()).padStart(2,'0'); }catch(e){}
+  render();
+})();
+</script>
+<script>
+"use strict";
+/* Registrazione del service worker: l'app installata funziona anche offline. */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('./sw.js').catch(function(){ /* senza service worker l'app funziona comunque online */ });
+  });
+}
+/* Installazione: pulsante in pagina quando possibile; altrimenti guida ad aprire in Chrome. */
+(function(){
+  var deferred=null, bar=null;
+  var URL_APP='https://rivierabeachappartamenti-oss.github.io/magazzinieri-app/';
+  var STANDALONE = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true;
+
+  function baseBar(){
+    var el=document.createElement('div');
+    el.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;display:flex;align-items:center;gap:10px;'+
+      'background:#1B5BD7;color:#fff;border-radius:16px;padding:12px 14px;box-shadow:0 10px 30px -8px rgba(0,0,0,.45);'+
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;';
+    return el;
+  }
+  function bottone(testo){
+    var b=document.createElement('button');
+    b.textContent=testo;
+    b.style.cssText='border:none;border-radius:12px;background:#fff;color:#1B5BD7;font-weight:800;font-size:15px;'+
+      'padding:12px 16px;min-height:48px;cursor:pointer;font-family:inherit;white-space:nowrap;';
+    return b;
+  }
+  function chiusura(){
+    var x=document.createElement('button');
+    x.textContent='×'; x.setAttribute('aria-label','Chiudi');
+    x.style.cssText='border:none;background:transparent;color:#fff;font-size:22px;line-height:1;cursor:pointer;padding:8px;min-height:48px;font-family:inherit;';
+    x.onclick=function(){ if(bar){ bar.remove(); bar=null; } };
+    return x;
+  }
+  function mostraInstalla(){
+    if(bar){ bar.remove(); bar=null; }
+    bar=baseBar();
+    bar.innerHTML='<span style="font-size:14px;font-weight:600;flex:1;line-height:1.35">Installa l’app sul telefono:<br>icona in home e schermo intero</span>';
+    var b=bottone('Installa');
+    b.onclick=function(){
+      if(!deferred) return;
+      deferred.prompt();
+      deferred.userChoice.then(function(){ deferred=null; if(bar){ bar.remove(); bar=null; } });
+    };
+    bar.appendChild(b); bar.appendChild(chiusura());
+    document.body.appendChild(bar);
+  }
+  function mostraApriInChrome(){
+    if(bar || STANDALONE) return;
+    bar=baseBar();
+    var isAndroid=/Android/i.test(navigator.userAgent);
+    bar.innerHTML='<span style="font-size:13.5px;font-weight:600;flex:1;line-height:1.4">Per installare l’app apri questo indirizzo con <b>Chrome</b> (qui l’installazione non è disponibile)</span>';
+    if(isAndroid){
+      var b=bottone('Apri in Chrome');
+      b.onclick=function(){
+        location.href='intent://rivierabeachappartamenti-oss.github.io/magazzinieri-app/#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(URL_APP)+';end';
+      };
+      bar.appendChild(b);
+    } else {
+      var c=bottone('Copia indirizzo');
+      c.onclick=function(){
+        (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(URL_APP) : Promise.reject())
+          .then(function(){ c.textContent='Copiato ✓'; }, function(){ c.textContent=URL_APP; c.style.fontSize='11px'; });
+      };
+      bar.appendChild(c);
+    }
+    bar.appendChild(chiusura());
+    document.body.appendChild(bar);
+  }
+  window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault(); deferred=e; mostraInstalla();
+  });
+  window.addEventListener('appinstalled', function(){ deferred=null; if(bar){ bar.remove(); bar=null; } });
+  /* Se dopo 3 secondi nessuna proposta di installazione è arrivata (browser interno di un'app,
+     oppure browser non compatibile), guida l'utente ad aprire in Chrome. */
+  window.addEventListener('load', function(){
+    setTimeout(function(){ if(!deferred && !STANDALONE) mostraApriInChrome(); }, 3000);
+  });
+})();
+</script>
