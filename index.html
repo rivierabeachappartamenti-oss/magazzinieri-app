@@ -620,6 +620,25 @@
         });
       }catch(e){ self.permesso='denied'; if(onKo) onKo(); }
     },
+    // Fonde due frammenti riconoscendo l'eventuale sovrapposizione di parole
+    // (buffer «san benedetto» + nuovo «benedetto limone» -> «san benedetto limone», non «... benedetto benedetto ...»).
+    _fondi(a,b){
+      const wa=a.split(/\s+/), wb=b.split(/\s+/);
+      let k=0;
+      for(let n=Math.min(wa.length,wb.length); n>0; n--){
+        if(norm(wa.slice(-n).join(' '))===norm(wb.slice(0,n).join(' '))){ k=n; break; }
+      }
+      return wa.concat(wb.slice(k)).join(' ');
+    },
+    // Comprime le parole identiche consecutive prodotte a volte dal motore («latte latte intero» -> «latte intero»).
+    _comprimiDoppioni(s){
+      const out=[];
+      for(const t of String(s).split(/\s+/)){
+        if(out.length && norm(out[out.length-1])===norm(t)) continue;
+        out.push(t);
+      }
+      return out.join(' ');
+    },
     // (Ri)arma il timer di pausa: allo scadere, la frase bufferizzata viene emessa una sola volta.
     _armaTimer(){
       const self=this;
@@ -630,7 +649,7 @@
     // Timer dedicato: NON usa l'array TIMERS globale della UI (che i render azzerano).
     flushFrase(){
       if(this.timerFrase){ clearTimeout(this.timerFrase); this.timerFrase=null; }
-      const b=this.bufferFrase; this.bufferFrase='';
+      const b=this._comprimiDoppioni(this.bufferFrase); this.bufferFrase='';
       if(b && b.trim() && this.onFinal) this.onFinal(b);
     },
     start(onInterim, onFinal, onFail){
@@ -649,7 +668,7 @@
               if(!self.bufferFrase){ self.bufferFrase=txt; }               // primo frammento della frase
               else if(nb.indexOf(bb)===0){ self.bufferFrase=txt; }         // il nuovo ricontiene il vecchio -> sostituzione
               else if(bb.indexOf(nb)===0 || bb===nb){ /* doppione più corto/uguale: ignora */ }
-              else { self.bufferFrase = self.bufferFrase+' '+txt; }        // frammenti disgiunti nella stessa finestra
+              else { self.bufferFrase = self._fondi(self.bufferFrase, txt); }  // fusione con sovrapposizione riconosciuta
               self._armaTimer();
               if(self.onInterim) self.onInterim(self.bufferFrase);         // l'operatore vede la frase che cresce
             }
