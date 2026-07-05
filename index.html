@@ -1172,9 +1172,12 @@
   // gestione di ogni risultato «finale» della dettatura di sala
   function handleSalaFinal(txt){
     hideProv();
-    const n=norm(txt);
-    if(n==='nuovo scaffale' || n==='crea nuovo scaffale' || n==='apri nuovo scaffale'){
-      (async()=>{ const ok=await microConfirm(); if(ok){ doNewShelf(); } })();
+    // comando «nuovo scaffale [nome]»: confronto senza punteggiatura, per tollerare il punto finale del motore
+    const nc=norm(txt).replace(/[^\p{L}\p{N} ]+/gu,' ').replace(/\s+/g,' ').trim();
+    const m=nc.match(/^(?:crea |apri )?nuovo scaffale(?: (.+))?$/);
+    if(m){
+      const nomeScaffale = m[1] ? cap(m[1]) : '';
+      (async()=>{ const ok=await microConfirm(nomeScaffale); if(ok){ doNewShelf(nomeScaffale); } })();
       return;
     }
     // R4 — le quantità appartengono all'inventario di magazzino: in sala si salva solo il nome
@@ -1235,10 +1238,13 @@
     const savedTimers=TIMERS; TIMERS=[]; // non azzerare i timeout in corso
     renderDettatura(); TIMERS=savedTimers.concat(TIMERS); S.recording=wasRec; refreshMic();
   }
-  function microConfirm(){
+  function microConfirm(nomeScaffale){
     return new Promise(resolve=>{
       const box=document.createElement('div'); box.className='cmd-confirm';
-      box.innerHTML='<div class="ct">Nuovo scaffale? Dillo di nuovo o tocca ✓ — oppure continua a dettare</div>'+
+      const domanda = nomeScaffale
+        ? 'Nuovo scaffale «'+esc(nomeScaffale)+'»? Tocca ✓ per crearlo — oppure continua a dettare'
+        : 'Nuovo scaffale? Dillo di nuovo o tocca ✓ — oppure continua a dettare';
+      box.innerHTML='<div class="ct">'+domanda+'</div>'+
         '<button id="mcOk">'+IC.check+'</button>';
       screen.querySelector('.dict-area').after(box);
       let settled=false;
@@ -1246,9 +1252,10 @@
       box.querySelector('#mcOk').onclick=()=>{ if(settled)return; settled=true; box.remove(); resolve(true); };
     });
   }
-  function doNewShelf(){
-    const c=corsia(); const ns={id:nid(), titolo:'Nuovo scaffale', voci:[]}; c.scaffali.push(ns);
-    S.dictSid=ns.id; renderDettaturaKeep(); toast('Nuovo scaffale creato');
+  function doNewShelf(nomeScaffale){
+    const c=corsia(); const ns={id:nid(), titolo:nomeScaffale||'Nuovo scaffale', voci:[]}; c.scaffali.push(ns);
+    S.dictSid=ns.id; renderDettaturaKeep();
+    toast(nomeScaffale ? 'Scaffale «'+nomeScaffale+'» creato — detta pure le sue voci' : 'Nuovo scaffale creato');
   }
   function manualNewShelf(){
     const c=corsia(); const ns={id:nid(), titolo:'Nuovo scaffale', voci:[]}; c.scaffali.push(ns);
