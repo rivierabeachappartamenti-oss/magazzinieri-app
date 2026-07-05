@@ -620,22 +620,47 @@
         });
       }catch(e){ self.permesso='denied'; if(onKo) onKo(); }
     },
+    // Normalizza una parola per il confronto: minuscolo, senza accenti E senza punteggiatura di contorno
+    // (così «limone» e «Limone.» risultano la stessa parola).
+    _np(t){ return norm(t).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu,''); },
+    _parole(s){ return String(s).split(/\s+/).filter(Boolean); },
+    // Vero se la sequenza di parole di a è prefisso di quella di b (confronto insensibile a maiuscole/punteggiatura).
+    _prefisso(a,b){
+      const wa=this._parole(a), wb=this._parole(b);
+      if(wa.length>wb.length) return false;
+      for(let i=0;i<wa.length;i++){ if(this._np(wa[i])!==this._np(wb[i])) return false; }
+      return true;
+    },
     // Fonde due frammenti riconoscendo l'eventuale sovrapposizione di parole
     // (buffer «san benedetto» + nuovo «benedetto limone» -> «san benedetto limone», non «... benedetto benedetto ...»).
     _fondi(a,b){
-      const wa=a.split(/\s+/), wb=b.split(/\s+/);
+      const wa=this._parole(a), wb=this._parole(b);
       let k=0;
       for(let n=Math.min(wa.length,wb.length); n>0; n--){
-        if(norm(wa.slice(-n).join(' '))===norm(wb.slice(0,n).join(' '))){ k=n; break; }
+        let uguali=true;
+        for(let i=0;i<n;i++){ if(this._np(wa[wa.length-n+i])!==this._np(wb[i])){ uguali=false; break; } }
+        if(uguali){ k=n; break; }
       }
       return wa.concat(wb.slice(k)).join(' ');
     },
-    // Comprime le parole identiche consecutive prodotte a volte dal motore («latte latte intero» -> «latte intero»).
+    // Comprime le ripetizioni prodotte a volte dal motore: parole identiche consecutive
+    // («latte latte intero» -> «latte intero») e intere frasi ripetute in coda
+    // («san benedetto limone san benedetto limone» -> «san benedetto limone»).
     _comprimiDoppioni(s){
-      const out=[];
-      for(const t of String(s).split(/\s+/)){
-        if(out.length && norm(out[out.length-1])===norm(t)) continue;
+      let out=[];
+      for(const t of this._parole(s)){
+        if(out.length && this._np(out[out.length-1])===this._np(t)) continue;
         out.push(t);
+      }
+      // frase ripetuta in coda: se le ultime n parole ricalcano le n precedenti, si eliminano (ripetendo finché serve)
+      let riduci=true;
+      while(riduci && out.length>=2){
+        riduci=false;
+        for(let n=Math.floor(out.length/2); n>=1; n--){
+          let uguali=true;
+          for(let i=0;i<n;i++){ if(this._np(out[out.length-n+i])!==this._np(out[out.length-2*n+i])){ uguali=false; break; } }
+          if(uguali){ out=out.slice(0,out.length-n); riduci=true; break; }
+        }
       }
       return out.join(' ');
     },
@@ -664,11 +689,10 @@
           if(res.isFinal){
             const txt=(res[0].transcript||'').trim();
             if(txt){
-              const nb=norm(txt), bb=norm(self.bufferFrase);
-              if(!self.bufferFrase){ self.bufferFrase=txt; }               // primo frammento della frase
-              else if(nb.indexOf(bb)===0){ self.bufferFrase=txt; }         // il nuovo ricontiene il vecchio -> sostituzione
-              else if(bb.indexOf(nb)===0 || bb===nb){ /* doppione più corto/uguale: ignora */ }
-              else { self.bufferFrase = self._fondi(self.bufferFrase, txt); }  // fusione con sovrapposizione riconosciuta
+              if(!self.bufferFrase){ self.bufferFrase=txt; }                       // primo frammento della frase
+              else if(self._prefisso(self.bufferFrase, txt)){ self.bufferFrase=txt; } // il nuovo ricontiene il vecchio -> sostituzione
+              else if(self._prefisso(txt, self.bufferFrase)){ /* doppione più corto/uguale: ignora */ }
+              else { self.bufferFrase = self._fondi(self.bufferFrase, txt); }      // fusione con sovrapposizione riconosciuta
               self._armaTimer();
               if(self.onInterim) self.onInterim(self.bufferFrase);         // l'operatore vede la frase che cresce
             }
