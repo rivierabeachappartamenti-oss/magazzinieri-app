@@ -411,6 +411,11 @@
             filter:false, homeTab:'sala', recording:false, magRecording:false, dictSid:null };
   let uid = 100; const nid = ()=> 'x'+(uid++);
   let TIMERS = [];
+  // Rete di sicurezza anti-doppione al commit vocale: se l'ultima riga inserita è recente e
+  // il suo testo è prefisso del nuovo, la si sostituisce invece di aggiungerne un'altra.
+  const FINESTRA_DOPPIONE_MS = 6000;
+  let tsCommitSala = 0;   // istante (ms) dell'ultimo inserimento vocale in sala
+  let tsCommitMag  = 0;   // istante (ms) dell'ultimo inserimento vocale in magazzino
   const clearTimers = ()=>{ TIMERS.forEach(clearTimeout); TIMERS=[]; };
   const wait = (ms)=> new Promise(r=>{ TIMERS.push(setTimeout(r,ms)); });
   const REDUCED = window.matchMedia('(prefers-reduced-motion:reduce)').matches;
@@ -557,12 +562,18 @@
   /* ============ RICONOSCIMENTO VOCALE (Web Speech API, reale) ============ */
   // Nessuna simulazione: il riconoscimento è reale quando il browser lo supporta e il microfono è autorizzato.
   // Stati possibili: reale attivo/pronto · microfono non autorizzato · riconoscimento non disponibile sul browser.
+  // Durata del silenzio (ms) oltre la quale la frase in corso si considera conclusa e viene emessa.
+  const PAUSA_FRASE_MS = 1100;
   const Speech = {
     rec:null, supported:false, active:false, restart:false,
     permesso:'sconosciuto',          // 'granted' | 'denied' | 'prompt' | 'sconosciuto'
     onInterim:null, onFinal:null, onFail:null,
     onPermChange:null,               // callback per aggiornare la UI quando cambia lo stato del permesso
     _deniedNotified:false,           // evita di ripetere in loop il modal «microfono bloccato»
+    // Buffer di frase con debounce: aggrega i risultati definitivi incrementali che Chrome Android
+    // emette in modo ripetuto (ogni definitivo ricontiene l'inizio della frase) in UNA sola frase,
+    // emessa via onFinal solo dopo una pausa di silenzio (PAUSA_FRASE_MS).
+    bufferFrase:'', timerFrase:null,
     init(){
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if(!SR){ this.supported=false; }
@@ -609,23 +620,51 @@
         });
       }catch(e){ self.permesso='denied'; if(onKo) onKo(); }
     },
+    // (Ri)arma il timer di pausa: allo scadere, la frase bufferizzata viene emessa una sola volta.
+    _armaTimer(){
+      const self=this;
+      if(this.timerFrase){ clearTimeout(this.timerFrase); }
+      this.timerFrase=setTimeout(()=>{ self.timerFrase=null; self.flushFrase(); }, PAUSA_FRASE_MS);
+    },
+    // Emette la frase accumulata (se presente) tramite onFinal, UNA volta, e svuota il buffer.
+    // Timer dedicato: NON usa l'array TIMERS globale della UI (che i render azzerano).
+    flushFrase(){
+      if(this.timerFrase){ clearTimeout(this.timerFrase); this.timerFrase=null; }
+      const b=this.bufferFrase; this.bufferFrase='';
+      if(b && b.trim() && this.onFinal) this.onFinal(b);
+    },
     start(onInterim, onFinal, onFail){
       if(!this.rec){ if(onFail) onFail(); return false; }
       this.onInterim=onInterim; this.onFinal=onFinal; this.onFail=onFail;
+      this.bufferFrase=''; if(this.timerFrase){ clearTimeout(this.timerFrase); this.timerFrase=null; }
       const r=this.rec, self=this;
       r.onresult=(ev)=>{
         let interim='';
         for(let k=ev.resultIndex; k<ev.results.length; k++){
           const res=ev.results[k];
-          if(res.isFinal){ const txt=(res[0].transcript||'').trim(); if(txt && self.onFinal) self.onFinal(txt); }
+          if(res.isFinal){
+            const txt=(res[0].transcript||'').trim();
+            if(txt){
+              const nb=norm(txt), bb=norm(self.bufferFrase);
+              if(!self.bufferFrase){ self.bufferFrase=txt; }               // primo frammento della frase
+              else if(nb.indexOf(bb)===0){ self.bufferFrase=txt; }         // il nuovo ricontiene il vecchio -> sostituzione
+              else if(bb.indexOf(nb)===0 || bb===nb){ /* doppione più corto/uguale: ignora */ }
+              else { self.bufferFrase = self.bufferFrase+' '+txt; }        // frammenti disgiunti nella stessa finestra
+              self._armaTimer();
+              if(self.onInterim) self.onInterim(self.bufferFrase);         // l'operatore vede la frase che cresce
+            }
+          }
           else interim+=res[0].transcript;
         }
-        if(interim.trim() && self.onInterim) self.onInterim(interim.trim());
+        const it=interim.trim();
+        if(it && self.onInterim) self.onInterim(self.bufferFrase ? self.bufferFrase+' '+it : it);
       };
       r.onerror=(ev)=>{
         const e=ev.error;
         if(e==='not-allowed'||e==='service-not-allowed'){
-          // Permesso negato/revocato: aggiorna stato, ferma l'ascolto, azzera i flag, mostra le istruzioni una sola volta.
+          // Permesso negato/revocato: emette prima la frase eventualmente in buffer (mai perderla),
+          // poi aggiorna stato, ferma l'ascolto, azzera i flag, mostra le istruzioni una sola volta.
+          self.flushFrase();
           self.permesso='denied'; self.active=false; self.restart=false;
           S.recording=false; S.magRecording=false;
           self.onFail=null;
@@ -635,6 +674,7 @@
           return;
         }
         if(e==='audio-capture'){
+          self.flushFrase();   // non perdere la frase in buffer prima di chiudere per errore fatale
           toast('Nessun microfono disponibile');
           self.active=false; self.restart=false; S.recording=false; S.magRecording=false; self.onFail=null; render();
           return;
@@ -643,13 +683,16 @@
       };
       r.onend=()=>{
         // Android chiude da solo la sessione: se l'utente non ha fermato, riavvia per mantenere l'ascolto continuo.
+        // Se invece NON si riavvia (sessione conclusa), emette la frase eventualmente ancora in buffer.
         if(self.active && self.restart){ try{ r.start(); }catch(e){} }
+        else self.flushFrase();
       };
       this.active=true; this.restart=true;
       try{ r.start(); return true; }
       catch(e){ this.active=false; this.restart=false; if(onFail) onFail(); return false; }
     },
     stop(){
+      this.flushFrase();   // emette la frase eventualmente in buffer prima di fermare l'ascolto
       this.active=false; this.restart=false;
       if(this.rec){ try{ this.rec.stop(); }catch(e){} }
     }
@@ -1120,11 +1163,22 @@
 
   function commitVoce(text){
     const sc=scaffOf(S.dictSid); if(!sc) return;
-    const v={id:nid(), nome:text}; sc.voci.push(v);
+    const last = sc.voci.length ? sc.voci[sc.voci.length-1] : null;
+    const nt = norm(text);
+    let targetId;
+    // Rete di sicurezza: doppione residuo del motore. Se l'ultima voce è recente (< 6 s) e il suo
+    // testo normalizzato è PREFISSO del nuovo, si sostituisce quella voce invece di aggiungerne un'altra.
+    if(last && nt && norm(last.nome) && nt.indexOf(norm(last.nome))===0
+       && (Date.now()-tsCommitSala) < FINESTRA_DOPPIONE_MS){
+      last.nome=text; targetId=last.id;
+    } else {
+      const v={id:nid(), nome:text}; sc.voci.push(v); targetId=v.id;
+    }
+    tsCommitSala=Date.now();
     // re-render dettatura mantenendo stato
     renderDettaturaKeep();
-    // flash sull'ultima riga
-    const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.vid===v.id);
+    // flash sulla riga interessata
+    const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.vid===targetId);
     if(el){
       if(!REDUCED) el.closest('.voce').classList.add('flash');
       scrollRowIntoView(el.closest('.voce'));   // R3 — la visuale segue la riga appena committata
@@ -1391,6 +1445,7 @@
       if(last){
         last.quantita = mergeQ(last.quantita, p.quantita);     // stessa unità: somma; altrimenti nuova coppia
         last.raw = (last.raw ? last.raw+' ' : '') + txt;
+        tsCommitMag=Date.now();
         flashMagRow(last.id);
         return;
       }
@@ -1401,12 +1456,24 @@
     if(!nomeVuoto && p.quantita.length===0 && last && (!last.nome || !last.nome.trim()) && last.quantita.length>0){
       last.nome = cap(p.nome);
       last.raw = (last.raw ? last.raw+' ' : '') + txt;
+      tsCommitMag=Date.now();
+      flashMagRow(last.id);
+      return;
+    }
+
+    // Rete di sicurezza: doppione residuo del motore. Se l'ultima riga è recente (< 6 s) e il suo
+    // testo normalizzato è PREFISSO del nuovo, si sostituisce quella riga con la nuova versione.
+    const ntM=norm(txt), ltM=last ? norm(last.raw||last.nome) : '';
+    if(last && ltM && ntM.indexOf(ltM)===0 && (Date.now()-tsCommitMag) < FINESTRA_DOPPIONE_MS){
+      last.nome=cap(p.nome); last.quantita=p.quantita; last.raw=txt;
+      tsCommitMag=Date.now();
       flashMagRow(last.id);
       return;
     }
 
     const nr={id:nid(), nome:cap(p.nome), quantita:p.quantita, raw:txt};
     inv.righe.push(nr);
+    tsCommitMag=Date.now();
     flashMagRow(nr.id);
   }
   function newInventoryDialog(){
