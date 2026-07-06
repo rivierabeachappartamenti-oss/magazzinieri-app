@@ -642,6 +642,8 @@
     // emette in modo ripetuto (ogni definitivo ricontiene l'inizio della frase) in UNA sola frase,
     // emessa via onFinal solo dopo una pausa di silenzio (PAUSA_FRASE_MS).
     bufferFrase:'', timerFrase:null,
+    // BUG1/1c — anti-doppione tra flush successivi: memoria dell'ultima frase emessa (norm) e istante
+    ultimaEmessa:'', ultimaEmessaTs:0,
     init(){
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if(!SR){ this.supported=false; }
@@ -703,11 +705,24 @@
     // (buffer «san benedetto» + nuovo «benedetto limone» -> «san benedetto limone», non «... benedetto benedetto ...»).
     _fondi(a,b){
       const wa=this._parole(a), wb=this._parole(b);
-      let k=0;
+      const na=wa.map(w=>this._np(w)), nb=wb.map(w=>this._np(w));
+      // sub(small,big): vero se la sequenza di parole `small` compare come sottosequenza contigua in `big`
+      const sub=(small,big)=>{
+        if(small.length>big.length) return false;
+        for(let off=0; off+small.length<=big.length; off++){
+          let ok=true;
+          for(let i=0;i<small.length;i++){ if(small[i]!==big[i+off]){ ok=false; break; } }
+          if(ok) return true;
+        }
+        return false;
+      };
+      if(sub(na,nb)) return b;   // il buffer è già contenuto nel nuovo -> tieni il nuovo
+      if(sub(nb,na)) return a;   // il nuovo è già contenuto nel buffer -> tieni il buffer
+      let k=0;                   // altrimenti: massima sovrapposizione suffisso(a)=prefisso(b)
       for(let n=Math.min(wa.length,wb.length); n>0; n--){
-        let uguali=true;
-        for(let i=0;i<n;i++){ if(this._np(wa[wa.length-n+i])!==this._np(wb[i])){ uguali=false; break; } }
-        if(uguali){ k=n; break; }
+        let ug=true;
+        for(let i=0;i<n;i++){ if(na[na.length-n+i]!==nb[i]){ ug=false; break; } }
+        if(ug){ k=n; break; }
       }
       return wa.concat(wb.slice(k)).join(' ');
     },
@@ -743,12 +758,20 @@
     flushFrase(){
       if(this.timerFrase){ clearTimeout(this.timerFrase); this.timerFrase=null; }
       const b=this._comprimiDoppioni(this.bufferFrase); this.bufferFrase='';
-      if(b && b.trim() && this.onFinal) this.onFinal(b);
+      if(b && b.trim() && this.onFinal){
+        const nb=norm(b);
+        // BUG1/1c — scarta la ripetizione che Android rimanda subito dopo il riavvio di sessione:
+        // stessa frase (norm) già emessa da meno di 1500 ms -> non riemetterla.
+        if(nb===this.ultimaEmessa && (Date.now()-this.ultimaEmessaTs) < 1500) return;
+        this.ultimaEmessa=nb; this.ultimaEmessaTs=Date.now();
+        this.onFinal(b);
+      }
     },
     start(onInterim, onFinal, onFail){
       if(!this.rec){ if(onFail) onFail(); return false; }
       this.onInterim=onInterim; this.onFinal=onFinal; this.onFail=onFail;
       this.bufferFrase=''; if(this.timerFrase){ clearTimeout(this.timerFrase); this.timerFrase=null; }
+      this.ultimaEmessa=''; this.ultimaEmessaTs=0;   // BUG1/1c — nuova sessione: azzera la memoria anti-doppione
       const r=this.rec, self=this;
       r.onresult=(ev)=>{
         let interim='';
@@ -889,7 +912,7 @@
   // R3 — porta in vista la riga interessata dalla dettatura (interim o commit)
   function scrollRowIntoView(el){
     if(!el) return;
-    try{ el.scrollIntoView({block:'nearest', behavior: REDUCED?'auto':'smooth'}); }
+    try{ el.scrollIntoView({block:'nearest', behavior:'auto'}); }   // BUG2/2a — SEMPRE istantaneo: lo smooth interrompibile causava il «teletrasporto» a inizio pagina
     catch(e){ try{ screen.scrollTop=screen.scrollHeight; }catch(_){} }
   }
   function render(){
@@ -920,12 +943,32 @@
     wrap.innerHTML='<div class="h-eyebrow">Accesso</div><div class="h1">Chi sei?</div>'+
       '<p class="lead">Seleziona il tuo nome. Vedrai solo le corsie e le denominazioni del tuo profilo.</p><div style="height:16px"></div>';
     const list=document.createElement('div'); list.className='list-gap';
-    [['mario','Mario','Settore Frighi'],['luca','Luca','Settore Bibite']].forEach(([id,nm,st])=>{
-      const b=document.createElement('button'); b.className='usercard';
-      b.innerHTML='<span class="av">'+nm[0]+'</span><span><span class="un">'+nm+'</span><br><span class="us">'+st+'</span></span><span class="chev">'+IC.chev+'</span>';
-      b.onclick=()=>confirmIdentity(id,nm,st);
-      list.appendChild(b);
+    // FUNZIONE C/C1 — elenco dinamico su DB (non più i due utenti cablati)
+    Object.keys(DB).forEach(k=>{
+      const u=DB[k];
+      const nm=u.name||'';
+      const sub=(u.settore && String(u.settore).trim()) ? ('Settore '+u.settore) : 'Nessun settore';
+      const av=u.initial || (nm?nm.charAt(0):'?');
+      const card=document.createElement('div'); card.className='usercard';
+      card.setAttribute('role','button'); card.tabIndex=0;
+      card.innerHTML='<span class="av">'+esc(av)+'</span>'+
+        '<span><span class="un">'+esc(nm)+'</span><br><span class="us">'+esc(sub)+'</span></span>'+
+        '<button class="rowbtn" aria-label="Elimina utente" style="margin-left:auto">'+IC.trash+'</button>'+
+        '<span class="chev">'+IC.chev+'</span>';
+      const open=()=>confirmIdentity(k,nm,sub);
+      card.onclick=()=>{ open(); };
+      card.onkeydown=(e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); } };
+      // FUNZIONE C/C4 — cestino: elimina l'utente (con conferma forte), senza aprire il profilo
+      card.querySelector('.rowbtn').onclick=(e)=>{ e.stopPropagation(); confirmDeleteUser(k); };
+      list.appendChild(card);
     });
+    // FUNZIONE C/C2 — card «＋ Nuovo utente»
+    const newu=document.createElement('button'); newu.className='newshelf';
+    newu.style.width='100%'; newu.style.margin='4px 0 0';
+    newu.setAttribute('aria-label','Crea un nuovo utente');
+    newu.innerHTML=IC.plus+'Nuovo utente';
+    newu.onclick=()=>nuovoUtenteForm();
+    list.appendChild(newu);
     wrap.appendChild(list); screen.appendChild(wrap);
   }
   function confirmIdentity(id,nm,st){
@@ -933,6 +976,48 @@
       '. Le modifiche che farai saranno personali e visibili solo a te.</p>',
       [ {label:'Sì, sono '+nm, cls:'primary', onClick:()=>go('home',{userId:id, homeTab:'sala'})},
         {label:'Cambia utente'} ]);
+  }
+
+  // FUNZIONE C/C3 — form di creazione di un nuovo utente. L'overlay è costruito a mano perché i valori
+  // degli input vanno letti MENTRE sono ancora nel DOM (il click «Crea» legge e SOLO DOPO chiude).
+  function nuovoUtenteForm(){
+    const m=document.createElement('div'); m.className='modal';
+    m.innerHTML='<h3>Nuovo utente</h3>'+
+      '<p>Crea un profilo personale. Ogni utente vede solo le proprie corsie e denominazioni.</p>'+
+      '<div style="display:flex;flex-direction:column;gap:10px">'+
+        '<input class="inline-edit" id="nuNome" placeholder="Nome (obbligatorio)" aria-label="Nome utente">'+
+        '<input class="inline-edit" id="nuSettore" placeholder="Settore (facoltativo)" aria-label="Settore">'+
+      '</div>';
+    const wrap=document.createElement('div'); wrap.className='modal-actions'; wrap.style.marginTop='16px';
+    const bCrea=document.createElement('button'); bCrea.className='m-btn primary'; bCrea.textContent='Crea';
+    const bAnn=document.createElement('button'); bAnn.className='m-btn'; bAnn.textContent='Annulla';
+    wrap.appendChild(bCrea); wrap.appendChild(bAnn); m.appendChild(wrap);
+    const ov=overlay(m);
+    const inpN=m.querySelector('#nuNome'), inpS=m.querySelector('#nuSettore');
+    try{ inpN.focus(); }catch(e){}
+    bAnn.onclick=()=>ov.remove();
+    bCrea.onclick=()=>{
+      const nome=(inpN.value||'').trim(), settore=(inpS.value||'').trim();   // lettura PRIMA della chiusura
+      if(!nome){ toast('Scrivi un nome'); try{ inpN.focus(); }catch(e){} return; }
+      ov.remove();
+      const key='u'+nid();   // chiave utente univoca, namespace diverso dagli id entità 'x<num>'
+      DB[key]={ name:cap(nome), initial:cap(nome).charAt(0)||'?', settore:cap(settore||''),
+        corsie:[], inv:{active:false, settore:cap(settore||''), iniziata:null, prevData:null, prevCount:0, righe:[]} };
+      salvaDati();
+      go('home',{userId:key, homeTab:'sala'});
+      toast('Utente creato');
+    };
+  }
+  // FUNZIONE C/C4 — eliminazione di un utente con conferma forte; mai scendere sotto un utente.
+  function confirmDeleteUser(key){
+    const u=DB[key]; if(!u) return;
+    if(Object.keys(DB).length<=1){ toast('Deve restare almeno un utente'); return; }
+    modal('<h3>Eliminare l\'utente «'+esc(u.name)+'»?</h3><p>Verranno cancellati tutte le sue corsie, scaffali e inventari. <b>Non si può annullare.</b></p>',
+      [ {label:'Annulla'},
+        {label:'Elimina utente', cls:'danger', onClick:()=>{
+          delete DB[key]; salvaDati(); render();   // S.screen è 'login': render() ridisegna l'elenco
+          toast('Utente eliminato');
+        }} ]);
   }
 
   // Ripristino dei dati dimostrativi: cancella il salvataggio di TUTTI gli utenti (conferma forte).
@@ -1197,10 +1282,24 @@
       sc.voci.forEach(v=>{
         const row=document.createElement('div'); row.className='voce';
         const nm=document.createElement('div'); nm.className='voce-name'; nm.textContent=v.nome; nm.dataset.vid=v.id;
-        nm.onclick=()=>inlineEdit(nm, val=>{ v.nome=val; render(); });
+        // FUNZIONE D — correggere una voce da tastiera NON deve fermare la dettatura in corso: se si sta
+        // registrando, ricostruire con renderDettaturaKeep (Speech resta attivo) e riancorare al fondo; altrimenti render().
+        const dopoEdit=()=>{ if(S.recording){ renderDettaturaKeep(); try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render(); };
+        nm.onclick=()=>inlineEdit(nm, val=>{ v.nome=val; dopoEdit(); });
         const px=document.createElement('button'); px.className='rowbtn'; px.innerHTML=IC.pencil; px.setAttribute('aria-label','Correggi da tastiera');
-        px.onclick=()=>inlineEdit(nm, val=>{ v.nome=val; render(); });
-        row.appendChild(nm); row.appendChild(px); block.appendChild(row);
+        px.onclick=()=>inlineEdit(nm, val=>{ v.nome=val; dopoEdit(); });
+        // FUNZIONE D/D1 — cestino: elimina la voce mantenendo la dettatura attiva (renderDettaturaKeep, NON render())
+        const kb=document.createElement('button'); kb.className='rowbtn'; kb.innerHTML=IC.trash; kb.setAttribute('aria-label','Elimina voce');
+        kb.onclick=()=>{
+          const i=sc.voci.indexOf(v); if(i<0) return;
+          sc.voci.splice(i,1);
+          // FUNZIONE D/D1 — ricostruzione screen-aware: se si è tornati alla corsia con lo snackbar ancora
+          // visibile, render() ridisegna la schermata corretta; in dettatura si riancora al fondo (BUG2/2b).
+          const ricostr=()=>{ if(S.screen==='dettatura'){ renderDettaturaKeep(); try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render(); };
+          ricostr();
+          snackbar('«'+v.nome+'» eliminato','Annulla',()=>{ sc.voci.splice(Math.min(i,sc.voci.length),0,v); ricostr(); });
+        };
+        row.appendChild(nm); row.appendChild(px); row.appendChild(kb); block.appendChild(row);
       });
       // riga provvisoria (compilata durante la dettatura)
       const prov=document.createElement('div'); prov.className='voce'; prov.id='provRow'; prov.style.display='none';
@@ -1296,17 +1395,22 @@
     const last = sc.voci.length ? sc.voci[sc.voci.length-1] : null;
     const nt = norm(text);
     let targetId;
-    // Rete di sicurezza: doppione residuo del motore. Se l'ultima voce è recente (< 6 s) e il suo
-    // testo normalizzato è PREFISSO del nuovo, si sostituisce quella voce invece di aggiungerne un'altra.
-    if(last && nt && norm(last.nome) && nt.indexOf(norm(last.nome))===0
-       && (Date.now()-tsCommitSala) < FINESTRA_DOPPIONE_MS){
-      last.nome=text; targetId=last.id;
-    } else {
-      const v={id:nid(), nome:text}; sc.voci.push(v); targetId=v.id;
-    }
+    // BUG1/1b — rete di sicurezza BIDIREZIONALE: doppione residuo del motore. Se l'ultima voce è
+    // recente (< 6 s) e il suo testo normalizzato è prefisso del nuovo OPPURE il nuovo è prefisso del
+    // vecchio (inclusa uguaglianza), si sostituisce in-place tenendo la versione più lunga (più
+    // informativa), senza aggiungere una nuova riga.
+    const older=norm(last?last.nome:''), newer=nt;
+    const dup = last && older && newer &&
+                (newer.indexOf(older)===0 || older.indexOf(newer)===0) &&
+                (Date.now()-tsCommitSala) < FINESTRA_DOPPIONE_MS;
+    if(dup){ if(newer.length>=older.length) last.nome=text; targetId=last.id; }
+    else { const v={id:nid(), nome:text}; sc.voci.push(v); targetId=v.id; }
     tsCommitSala=Date.now();
     // re-render dettatura mantenendo stato
     renderDettaturaKeep();
+    // BUG2/2b — dopo la ricostruzione ancora la vista al fondo (le nuove righe sono sempre in fondo,
+    // sopra il microfono): così non si resta mai in cima; poi lo scorrimento istantaneo sulla riga.
+    try{ screen.scrollTop=screen.scrollHeight; }catch(e){}
     // flash sulla riga interessata
     const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.vid===targetId);
     if(el){
@@ -1344,7 +1448,10 @@
   }
   function manualNewShelf(){
     const c=corsia(); const ns={id:nid(), titolo:'Nuovo scaffale', voci:[]}; c.scaffali.push(ns);
-    S.dictSid=ns.id; const wasRec=S.recording; render(); S.recording=wasRec; refreshMic();
+    S.dictSid=ns.id;
+    // FUNZIONE D — se si sta dettando, mantenere attivo il riconoscimento (come doNewShelf): render() lo fermerebbe
+    // lasciando la UI «in ascolto» (il vecchio ripristino di wasRec mascherava lo stop senza risolverlo).
+    if(S.recording){ renderDettaturaKeep(); try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render();
     toast('Nuovo scaffale creato');
   }
 
@@ -1364,11 +1471,23 @@
     });
     return map;
   }
+  // BUG3 — ripulisce gli agganci fantasma: rimuove da ogni voce di sala il linkId che non punta più
+  // a una riga di magazzino esistente (riga eliminata). Così il riscontro non conserva MAI un
+  // riferimento a righe non più presenti in inv.righe. Da chiamare prima di ricalcolare lo Stock.
+  function purgeLinkOrfani(inv){
+    const vivi=new Set((inv&&inv.righe?inv.righe:[]).map(r=>r.id));
+    (U().corsie||[]).forEach(c=> (c.scaffali||[]).forEach(sc=> (sc.voci||[]).forEach(v=>{
+      if(v.linkId && !vivi.has(v.linkId)) delete v.linkId;
+    })));
+  }
   // riscontro di una voce di sala: prima l'aggancio manuale (linkId), poi il nome
   function resolveMatch(v, inv, map){
     if(v.linkId){
       const r=(inv.righe||[]).find(x=>x.id===v.linkId);
       if(r) return { quantita:r.quantita||[], rigaIds:[r.id] };
+      // BUG3 — aggancio fantasma: la riga agganciata non esiste più. Si azzera il linkId orfano
+      // e si prosegue col match per nome (difesa puntuale, oltre a purgeLinkOrfani a monte).
+      delete v.linkId;
     }
     const m=map[norm(v.nome)];
     if(m) return { quantita:m.quantita, rigaIds:m.righe.map(r=>r.id) };
@@ -1376,6 +1495,7 @@
   }
   function renderStock(){
     const c=corsia(); const inv=U().inv;
+    purgeLinkOrfani(inv);              // BUG3 — nessun aggancio fantasma sopravvive: si ricalcola sempre dal vivo
     const map=buildInvMap(inv);
     // conteggi complessivi (non filtrati) e insieme delle righe di magazzino agganciate
     let agganci=0, senza=0; const used=new Set();
@@ -1402,7 +1522,9 @@
       screen.insertAdjacentHTML('beforeend','<div class="empty-note">Concludi un inventario in Magazzino per vedere qui le quantità riscontrate sotto ogni scaffale.</div>');
     }
 
-    // LISTINO nell'ordine di inserimento — mai riordinato
+    // REQ — confronto DIVISO PER SCAFFALE, ciascuno nell'ordine di dettatura (inserimento). Ogni scaffale è
+    // una <section> con la propria intestazione seguita SOLO dalle sue voci: la voce non si stacca mai dal
+    // suo scaffale (nemmeno con «Solo mancanti»). Mai riordinare per stato/quantità.
     c.scaffali.forEach(sc=>{
       const rows=[];
       sc.voci.forEach(v=>{
@@ -1411,10 +1533,16 @@
         if(S.filter && !(zero || !has)) return;   // «Solo mancanti»: riscontro 0 o assente
         rows.push(stockRow(v, m, has, zero));
       });
-      if(!rows.length) return;
-      const title=document.createElement('div'); title.className='shelf-title'; title.textContent=sc.titolo;
-      screen.appendChild(title);
-      rows.forEach(r=>screen.appendChild(r));
+      if(!rows.length) return;   // scaffale senza righe da mostrare (per il filtro): intestazione omessa, voci mai spostate altrove
+      const sec=document.createElement('section'); sec.className='shelf-sec';
+      const title=document.createElement('div'); title.className='shelf-title';
+      // intestazione dello scaffale + conteggio discreto «(n voci)» (non maiuscolo, per leggibilità)
+      title.innerHTML=esc(sc.titolo)+
+        '<span style="text-transform:none;font-weight:600;font-size:11.5px;color:var(--ink2);margin-left:8px;letter-spacing:.02em">('+
+        rows.length+(rows.length===1?' voce':' voci')+')</span>';
+      sec.appendChild(title);
+      rows.forEach(r=>sec.appendChild(r));
+      screen.appendChild(sec);
     });
 
     // Sezione finale: righe di magazzino che non agganciano alcuna voce di sala
@@ -1524,8 +1652,13 @@
     nm.textContent = q ? (r.nome+' — '+q) : r.nome;   // «nome — 2 cartoni + 5 pezzi»
     nm.onclick=()=>editMagRow(nm, r);
     const kb=document.createElement('button'); kb.className='rowbtn'; kb.innerHTML=IC.trash; kb.setAttribute('aria-label','Elimina voce');
-    kb.onclick=()=>{ const inv=U().inv; const i=inv.righe.indexOf(r); inv.righe.splice(i,1); render();
-      snackbar('Voce eliminata','Annulla',()=>{ inv.righe.splice(i,0,r); render(); }); };
+    kb.onclick=()=>{
+      const inv=U().inv; const i=inv.righe.indexOf(r); if(i<0) return;
+      // FUNZIONE D/D2 — se si sta dettando, ricostruire senza fermare il riconoscimento (come flashMagRow)
+      const rebuild=()=>{ if(S.magRecording){ keepSpeech=true; render(); keepSpeech=false; try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render(); };
+      inv.righe.splice(i,1); rebuild();
+      snackbar('Voce eliminata','Annulla',()=>{ inv.righe.splice(Math.min(i,inv.righe.length),0,r); rebuild(); });
+    };
     row.appendChild(nm); row.appendChild(kb); return row;
   }
   // correzione inline: si modifica il testo grezzo e si riesegue parseRiga
@@ -1535,7 +1668,9 @@
     let fin=false;
     const done=(save)=>{ if(fin)return; fin=true; const v=inp.value.trim();
       if(save && v){ const p=parseRiga(v); r.nome=cap(p.nome); r.quantita=p.quantita; r.raw=v; }
-      render(); };
+      // FUNZIONE D — correggere una riga durante la dettatura di magazzino NON deve fermare il riconoscimento:
+      // render() (keepSpeech=false) chiamerebbe Speech.stop() lasciando però S.magRecording=true (UI «in ascolto» ma motore fermo).
+      if(S.magRecording){ keepSpeech=true; render(); keepSpeech=false; try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render(); };
     inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();done(true);} else if(e.key==='Escape'){done(false);} });
     inp.addEventListener('blur',()=>done(true));
   }
@@ -1563,6 +1698,8 @@
   // R3 — re-render leggero (Speech attivo) + flash e scorrimento sulla riga interessata
   function flashMagRow(id){
     keepSpeech=true; render(); keepSpeech=false;
+    // BUG2/2b — dopo la ricostruzione ancora la vista al fondo, poi scorrimento istantaneo sulla riga.
+    try{ screen.scrollTop=screen.scrollHeight; }catch(e){}
     const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.rid===id);
     if(el){
       if(!REDUCED) el.closest('.voce').classList.add('flash');
@@ -1596,11 +1733,13 @@
       return;
     }
 
-    // Rete di sicurezza: doppione residuo del motore. Se l'ultima riga è recente (< 6 s) e il suo
-    // testo normalizzato è PREFISSO del nuovo, si sostituisce quella riga con la nuova versione.
+    // BUG1/1b — rete di sicurezza BIDIREZIONALE: doppione residuo del motore. Se l'ultima riga è
+    // recente (< 6 s) e il suo testo normalizzato è prefisso del nuovo OPPURE il nuovo è prefisso del
+    // vecchio (inclusa uguaglianza), NON si aggiunge una riga: si tiene la versione più lunga.
     const ntM=norm(txt), ltM=last ? norm(last.raw||last.nome) : '';
-    if(last && ltM && ntM.indexOf(ltM)===0 && (Date.now()-tsCommitMag) < FINESTRA_DOPPIONE_MS){
-      last.nome=cap(p.nome); last.quantita=p.quantita; last.raw=txt;
+    if(last && ltM && ntM && (ntM.indexOf(ltM)===0 || ltM.indexOf(ntM)===0)
+       && (Date.now()-tsCommitMag) < FINESTRA_DOPPIONE_MS){
+      if(ntM.length>=ltM.length){ last.nome=cap(p.nome); last.quantita=p.quantita; last.raw=txt; }
       tsCommitMag=Date.now();
       flashMagRow(last.id);
       return;
@@ -1624,6 +1763,17 @@
   }
   function closeInventory(){
     const inv=U().inv; if(!inv.righe.length){ toast('Aggiungi almeno una voce'); return; }
+    purgeLinkOrfani(inv);   // BUG3 — il riepilogo di chiusura si calcola dal vivo, senza agganci fantasma
+    // FUNZIONE C — utente senza corsie (profilo appena creato, corsie:[]): niente riscontro di sala da aggiornare.
+    // Si chiude comunque con un riepilogo essenziale, senza toccare corsie[0] (undefined → «Cannot set fresh» crash).
+    if(!U().corsie.length){
+      salvaDati();
+      modal('<h3>Inventario riordinato</h3><p><b>'+inv.righe.length+'</b> voci elaborate.<br>'+
+        'Non hai ancora corsie in sala a cui agganciare il riscontro: crea una corsia dalla Home per la consultazione.</p>',
+        [ {label:'Torna alla home', cls:'primary', onClick:()=>go('home',{homeTab:'sala'}) } ], false);
+      toast('Inventario chiuso');
+      return;
+    }
     const c=U().corsie[0]; c.fresh={state:'fresh', label:'Inventario: oggi 10:31'};
     salvaDati();   // la modifica precede il modal: salvataggio esplicito per mantenere l'invariante
     // riepilogo calcolato dall'aggancio dinamico per nome sulla prima corsia
