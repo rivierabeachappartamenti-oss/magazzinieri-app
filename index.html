@@ -406,6 +406,10 @@
     }
   };
 
+  // Copia originale profonda dei dati di esempio: catturata PRIMA di caricare l'eventuale
+  // salvataggio, serve al ripristino «Ripristina i dati di esempio».
+  const DEMO_DB = JSON.parse(JSON.stringify(DB));
+
   /* ============ STATO ============ */
   let S = { screen:'login', userId:null, corsiaId:null, mode:'modifica',
             filter:false, homeTab:'sala', recording:false, magRecording:false, dictSid:null };
@@ -427,6 +431,70 @@
   // normalizzazione per confronto nomi/token: minuscolo, senza accenti, spazi compattati
   const norm = (s)=> String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
   const cap = (s)=>{ s=String(s==null?'':s).trim(); return s? s.charAt(0).toUpperCase()+s.slice(1) : s; };
+
+  /* ============ PERSISTENZA (localStorage) — salvataggio automatico permanente ============ */
+  // Tutto ciò che l'operatore crea o modifica si salva da sé, sempre: cambiando facciata,
+  // chiudendo l'app, riavviando il telefono. Nessun pulsante «salva».
+  const STORAGE_KEY = 'magazzinieri-proto-dati';
+  let salvaTimer = null;             // debounce dedicato del salvataggio (NON l'array TIMERS della UI)
+  let avvisoSalvataggioDato = false; // il toast «salvataggio non disponibile» compare una sola volta
+
+  // Ricalcola il contatore uid oltre il massimo id 'x<numero>' presente (min 100),
+  // così i nuovi id non collidono con quelli caricati dal salvataggio.
+  function ricalcolaUid(){
+    let max = 99;
+    const considera = (id)=>{ const m=/^x(\d+)$/.exec(String(id==null?'':id)); if(m){ const n=+m[1]; if(n>max) max=n; } };
+    Object.keys(DB).forEach(k=>{
+      const u=DB[k]; if(!u || !Array.isArray(u.corsie)) return;
+      u.corsie.forEach(c=>{
+        considera(c.id);
+        (c.scaffali||[]).forEach(sc=>{ considera(sc.id); (sc.voci||[]).forEach(v=>considera(v.id)); });
+        (c.daAssegnare||[]).forEach(d=>considera(d.id));
+      });
+      if(u.inv && Array.isArray(u.inv.righe)) u.inv.righe.forEach(r=>considera(r.id));
+    });
+    uid = max + 1;
+  }
+
+  // Caricamento all'avvio: se esiste un salvataggio valido, sostituisce il contenuto di DB.
+  // Parse fallito o forma invalida → si ignora e si tengono i dati demo. MAI bloccare l'avvio.
+  function caricaDati(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw){
+        const salvato = JSON.parse(raw);
+        const db = salvato && salvato.db;
+        // forma attesa: oggetto con almeno una chiave utente che possiede un array `corsie`
+        const valido = salvato && salvato.schema===1 && db && typeof db==='object'
+          && Object.keys(db).some(k=> db[k] && Array.isArray(db[k].corsie));
+        if(valido){
+          Object.keys(DB).forEach(k=>delete DB[k]);
+          Object.assign(DB, db);
+        }
+      }
+    }catch(e){ /* parse/forma non validi: si tengono i dati demo */ }
+    ricalcolaUid();
+  }
+
+  // Scrittura effettiva in localStorage. Quota piena o storage negato → avviso una volta, poi silenzioso.
+  function scriviOra(){
+    try{
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ schema:1, salvatoIl:new Date().toISOString(), db:DB }));
+    }catch(e){
+      if(!avvisoSalvataggioDato){ avvisoSalvataggioDato=true;
+        try{ toast('Attenzione: salvataggio non disponibile su questo browser'); }catch(_){} }
+    }
+  }
+  // Salvataggio con debounce (~250 ms): assorbe le scritture a raffica della dettatura.
+  function salvaDati(){
+    if(salvaTimer) clearTimeout(salvaTimer);
+    salvaTimer = setTimeout(()=>{ salvaTimer=null; scriviOra(); }, 250);
+  }
+  // Flush immediato (senza debounce): quando l'app passa in background o viene chiusa dal task switcher.
+  function flushSalva(){
+    if(salvaTimer){ clearTimeout(salvaTimer); salvaTimer=null; }
+    scriviOra();
+  }
 
   /* ============ LESSICO UNITÀ (parser quantità) ============ */
   // canonico singolare -> plurale
@@ -831,6 +899,7 @@
     ({ login:renderLogin, home:renderHome, corsia:renderCorsia,
        dettatura:renderDettatura, stock:renderStock, magazzino:renderMagazzino }[S.screen])();
     screen.scrollTop=0;
+    salvaDati();   // ogni modifica dati passa da qui: salvataggio automatico (con debounce)
   }
 
   function setTopbar(parts){
@@ -866,6 +935,20 @@
         {label:'Cambia utente'} ]);
   }
 
+  // Ripristino dei dati dimostrativi: cancella il salvataggio di TUTTI gli utenti (conferma forte).
+  function ripristinaDatiEsempio(){
+    modal('<h3>Ripristinare i dati di esempio?</h3><p>Cancella <b>TUTTO il lavoro salvato</b> di tutti gli utenti e ripristina i dati dimostrativi. <b>Non si può annullare.</b></p>',
+      [ {label:'Annulla'},
+        {label:'Ripristina i dati di esempio', cls:'danger', onClick:()=>{
+          try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+          Object.keys(DB).forEach(k=>delete DB[k]);
+          Object.assign(DB, JSON.parse(JSON.stringify(DEMO_DB)));   // deep copy: DEMO_DB resta intatto
+          ricalcolaUid();
+          go('login');
+          toast('Dati di esempio ripristinati');
+        }} ]);
+  }
+
   /* ---------- HOME ---------- */
   function renderHome(){
     const u=U();
@@ -875,7 +958,8 @@
       right:'<button class="iconbtn" id="menuBtn" aria-label="Menu">'+IC.kebab+'</button>'
     });
     topbar.querySelector('#menuBtn').onclick=()=>bottomSheet(u.name+' — '+u.settore, null, [
-      {label:'Esci dal turno', icon:IC.logout, danger:true, onClick:()=>go('login')}
+      {label:'Esci dal turno', icon:IC.logout, danger:true, onClick:()=>go('login')},
+      {label:'Ripristina i dati di esempio', icon:IC.trash, danger:true, onClick:()=>ripristinaDatiEsempio()}
     ]);
 
     const wrap=document.createElement('div'); wrap.className='pad';
@@ -1237,6 +1321,7 @@
     // ricostruisci ma preserva recording flag
     const savedTimers=TIMERS; TIMERS=[]; // non azzerare i timeout in corso
     renderDettatura(); TIMERS=savedTimers.concat(TIMERS); S.recording=wasRec; refreshMic();
+    salvaDati();   // la dettatura passa da qui: salvataggio automatico (debounce, non interrompe l'ascolto)
   }
   function microConfirm(nomeScaffale){
     return new Promise(resolve=>{
@@ -1540,6 +1625,7 @@
   function closeInventory(){
     const inv=U().inv; if(!inv.righe.length){ toast('Aggiungi almeno una voce'); return; }
     const c=U().corsie[0]; c.fresh={state:'fresh', label:'Inventario: oggi 10:31'};
+    salvaDati();   // la modifica precede il modal: salvataggio esplicito per mantenere l'invariante
     // riepilogo calcolato dall'aggancio dinamico per nome sulla prima corsia
     const map=buildInvMap(inv); let agg=0, senza=0; const used=new Set();
     c.scaffali.forEach(sc=> sc.voci.forEach(v=>{
@@ -1560,6 +1646,11 @@
   /* ============ AVVIO ============ */
   try{ const d=new Date(); document.getElementById('clock').textContent=
     d.getHours()+':'+String(d.getMinutes()).padStart(2,'0'); }catch(e){}
+  caricaDati();   // ripristina l'eventuale lavoro salvato PRIMA del primo render (mai la navigazione)
+  // Flush immediato quando l'app passa in background o viene chiusa: è ciò che salva
+  // se l'operatore chiude l'app dal task switcher senza tornare al render.
+  try{ document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flushSalva(); }); }catch(e){}
+  try{ window.addEventListener('pagehide', ()=>{ flushSalva(); }); }catch(e){}
   render();
 })();
 </script>
