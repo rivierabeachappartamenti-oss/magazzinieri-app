@@ -420,6 +420,11 @@
   const FINESTRA_DOPPIONE_MS = 6000;
   let tsCommitSala = 0;   // istante (ms) dell'ultimo inserimento vocale in sala
   let tsCommitMag  = 0;   // istante (ms) dell'ultimo inserimento vocale in magazzino
+  // P4 — comando vocale «nuovo scaffale»: UNA sola richiesta in sospeso alla volta (mai due scaffali).
+  // pendingShelf = { nome, awaitingName } | null. In attesa-nome la frase SUCCESSIVA e' il nome dello scaffale.
+  let pendingShelf = null;
+  let pendingShelfTs = 0;
+  const ATTESA_NOME_MS = 12000;   // finestra entro cui la frase dopo «nuovo scaffale» e' presa come NOME
   const clearTimers = ()=>{ TIMERS.forEach(clearTimeout); TIMERS=[]; };
   const wait = (ms)=> new Promise(r=>{ TIMERS.push(setTimeout(r,ms)); });
   const REDUCED = window.matchMedia('(prefers-reduced-motion:reduce)').matches;
@@ -432,15 +437,21 @@
   const norm = (s)=> String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
   const cap = (s)=>{ s=String(s==null?'':s).trim(); return s? s.charAt(0).toUpperCase()+s.slice(1) : s; };
 
-  /* ---- Confronto nomi tollerante per l'aggancio listino↔magazzino ----
-     Due regole che lavorano INSIEME:
+  /* ---- Confronto nomi per l'aggancio listino↔magazzino (scelte del committente) ----
+     Tolleranze che NON generano falsi positivi:
      1) ordine delle parole indifferente: «Coca Cola 1L» = «1L Coca Cola» (firma con parole ordinate);
-     2) refusi della STESSA parola (una-due-tre lettere): «Mogu Mogu» = «Mogo Mogo», «Mozzarella» = «Mozarella».
-     Il confronto è PAROLA PER PAROLA: parole DIVERSE non si agganciano (pesca ≠ pera), e i numeri devono
-     coincidere (1L ≠ 2L, 500g ≠ 600g: formati/quantità diversi non sono un refuso). */
-  // firma: minuscolo/senza accenti (norm), decimali uniti (1,5 = 1.5 = 15), punteggiatura→spazio
+     2) parole-riempitivo ignorabili: «san benedetto matcha the verde» = «san benedetto matcha verde»
+        (forti = articoli/preposizioni non ambigue; deboli the/te/gusto/succo solo come OMISSIONE, mai sostituzione);
+     3) refuso di UNA lettera per parola, regola «NO-ÀNCORA»: accettato solo quando TUTTE le parole cambiano
+        («mogu mogu»=«mogo mogo»), MAI quando una parola resta identica e cambia solo l'altra («mela rossa»≠«mela
+        rosa», «sale grosso»≠«sale rosso», «pepsi lattina»≠«peppsi lattina» → questi si collegano a mano).
+     Restano NON agganciati: «pesca»≠«pera», 1L≠2L, refusi su una sola parola. Priorità: evitare i FALSI POSITIVI. */
+  // firma: minuscolo/senza accenti (norm), decimali marcati (1,5 = 1.5, ma ≠ 15!), punteggiatura→spazio
   // (Coca-Cola = Coca Cola, S.Pellegrino = S Pellegrino), parole ORDINATE (ordine indifferente).
-  function sig(nome){ return norm(nome).replace(/(\d)[.,](\d)/g,'$1$2').replace(/[^a-z0-9\s]+/g,' ').split(' ').filter(Boolean).sort().join(' '); }
+  // P3 — il separatore decimale diventa «dec» (1,5 → 1dec5) così «1,5 L» NON coincide più con «15 L».
+  // P3 — «the» (grafia ASR di «tè») è unificato a «te»: così «matcha the verde» = «matcha tè verde» (stessa parola),
+  // mentre resta distinto da «succo» (v. riempitivi deboli: the/succo è sostituzione, non omissione).
+  function sig(nome){ return norm(nome).replace(/(\d)[.,](\d)/g,'$1dec$2').replace(/[^a-z0-9\s]+/g,' ').replace(/\bthe\b/g,'te').split(' ').filter(Boolean).sort().join(' '); }
   function lev(a,b){
     if(a===b) return 0; const m=a.length, n=b.length; if(!m) return n; if(!n) return m;
     let prev=new Array(n+1); for(let j=0;j<=n;j++) prev[j]=j;
@@ -450,34 +461,88 @@
       prev=cur; }
     return prev[n];
   }
-  const WORD_MIN=0.70, WORD_MAX_EDITS=3;   // somiglianza minima fra due parole, e refuso massimo (tre lettere)
-  // Somiglianza fra due PAROLE (0..1). Le parole con numeri contano solo se identiche (1L≠2L, 500g≠600g);
-  // oltre tre lettere di differenza è una parola diversa, non un refuso.
+  const WORD_MIN=0.70;   // soglia interna: un refuso (0.9) la supera, una parola diversa (0) no
+  // Somiglianza fra due PAROLE: 1 = identiche; 0.9 = refuso di UNA sola lettera (Levenshtein ≤1); 0 = diverse.
+  // Il refuso di 1 lettera è ammesso SOLO su parole di almeno 3 lettere e senza cifre: così «mogu»/«mogo» e
+  // «cola»/«colla» passano, ma «vitamina E»/«vitamina D», «classe D»/«classe E» e i formati (1L≠2L) NO.
   function wordSim(a,b){
     if(a===b) return 1;
-    if(/\d/.test(a) || /\d/.test(b)) return 0;
-    const d=lev(a,b); if(d>WORD_MAX_EDITS) return 0;
-    const ml=Math.max(a.length,b.length); return ml ? 1 - d/ml : 0;
+    if(/\d/.test(a) || /\d/.test(b)) return 0;      // numeri/formati: solo identici (1L≠2L, 500g≠600g)
+    if(a.length<3 || b.length<3) return 0;          // parole di 1-2 lettere: solo identiche (vitamina E ≠ D)
+    return lev(a,b)<=1 ? 0.9 : 0;
   }
-  // Punteggio fra due elenchi di parole: -1 se NON è lo stesso prodotto, altrimenti somiglianza media (1=identici).
-  // Ogni parola deve abbinarsi a UNA parola dell'altro nome con somiglianza ≥ soglia: i refusi della stessa
-  // parola passano, ma una parola diversa (pesca vs pera) fa fallire l'aggancio. Serve lo stesso numero di parole.
+  // Punteggio fra due elenchi di parole: -1 se NON è lo stesso prodotto, altrimenti (0..1].
+  // Richiede lo STESSO numero di parole e che ogni parola si abbini a UNA parola dell'altro nome.
+  // Regola «NO-ÀNCORA» (scelta del committente): il refuso di 1 lettera si accetta SOLO se TUTTE le parole
+  // sono refuso (o tutte identiche). Se UNA parola resta IDENTICA e un'altra è un refuso, la parola diversa è
+  // un DISTINGUENTE (mela ROSSA/ROSA, sale GROSSO/ROSSO, pepsi/peppsi lattina) → NON si aggancia da sola.
+  // Così «mogu mogu»=«mogo mogo» (tutte refuso), ma «mela rossa»≠«mela rosa» (mela identica, rossa/rosa refuso).
   function tokenScore(A,B){
     if(!A.length || A.length!==B.length) return -1;
-    const used=new Array(B.length).fill(false); let tot=0;
+    const used=new Array(B.length).fill(false); let tot=0, anyExact=false, anyFuzzy=false;
     for(const wa of A){
       let bj=-1, bs=-1;
       for(let j=0;j<B.length;j++){ if(used[j]) continue; const s=wordSim(wa,B[j]); if(s>bs){ bs=s; bj=j; } }
       if(bj<0 || bs<WORD_MIN) return -1;
+      if(wa===B[bj]) anyExact=true; else anyFuzzy=true;
       used[bj]=true; tot+=bs;
     }
+    if(anyExact && anyFuzzy) return -1;   // NO-ÀNCORA: parola identica + refuso ⇒ prodotti diversi
     return tot/A.length;
+  }
+  // P3 — parole-riempitivo che NON distinguono un prodotto, in DUE livelli di prudenza:
+  //  • FORTI (STOP): articoli/preposizioni/congiunzioni puramente grammaticali — sempre ignorabili.
+  //  • DEBOLI (STOP_WEAK): «te/the» (l'ASR scrive «tè» come «the»). Ignorabili SOLO se restano ≥2 parole
+  //    significative per lato: così «matcha the verde» = «matcha verde», ma «te pesca» ≠ «pesca» (tè freddo
+  //    vs frutto fresco), «te limone» ≠ «limone», ecc. — la parola-testa non si può cancellare.
+  // Ogni parola descrittiva (intero, verde, naturale, bio…), ogni gusto e ogni numero/formato restano SIGNIFICATIVI.
+  // Solo particelle grammaticali NON ambigue. Escluse di proposito «e, d, i, in»: possono essere
+  // significative («vitamina E» ≠ «vitamina D», «riso in bianco» ≠ «riso bianco», «serie E», «categoria I»).
+  const STOP = new Set(['di','del','dello','della','dei','degli','delle','da','con','ed',
+    'al','allo','alla','ai','agli','alle','il','lo','la','gli','le',
+    'un','uno','una','l']);
+  // DEBOLI: parole-testa/categoria e modificatori generici, tolti solo se restano ≥2 parole significative
+  // («santal succo pesca» = «santal pesca», ma «succo pesca» ≠ «pesca»; «yogurt gusto pesca» = «yogurt pesca»).
+  const STOP_WEAK = new Set(['the','te','gusto','succo']);
+  const FILLER_PEN = 0.97;   // lieve penalità: a parità, l'aggancio esatto/stesso-conteggio vince su quello coi riempitivi
+  const noStop = (arr)=> arr.filter(t=>!STOP.has(t));
+  // Punteggio d'aggancio fra due elenchi di parole (già normalizzate/ordinate come da sig()): -1 = prodotti
+  // diversi; altrimenti (0..1]. Priorità assoluta: evitare i FALSI POSITIVI.
+  function matchScore(A, B){
+    // Livello 1+2: stesso numero di parole, ordine indifferente (il refuso di 1 lettera è gestito da tokenScore/no-àncora).
+    const s=tokenScore(A, B);
+    if(s>=0){
+      // Guardia parola-singola: i nomi di UNA sola parola si agganciano SOLO se IDENTICI — niente refuso su
+      // parola singola (grano≠grana, pane≠rane, mozzarella≠mozarella): troppo rischioso senza altre parole a fare da contesto.
+      if(A.length===1 || B.length===1) return (A[0]===B[0]) ? 1 : -1;
+      return s;
+    }
+    // Livello 3 (riempitivi FORTI rimossi): scatta solo se almeno un riempitivo è stato tolto.
+    const Ac=noStop(A), Bc=noStop(B);
+    if(Ac.length && Bc.length && !(Ac.length===A.length && Bc.length===B.length)){
+      const sc=tokenScore(Ac, Bc);
+      if(sc>=0){
+        if(Ac.length===1 || Bc.length===1){ if(Ac[0]===Bc[0]) return FILLER_PEN; }   // una parola: identica
+        else return sc*FILLER_PEN;
+      }
+    }
+    // Livello 3-bis (riempitivi DEBOLI the/te/gusto/succo): ammessi SOLO come OMISSIONE — un lato li ha,
+    // l'altro NO — e con ≥2 parole significative per lato. MAI come SOSTITUZIONE: «the pesca» ≠ «succo pesca»
+    // (tè freddo vs succo: prodotti/reparti diversi), «gusto pera» ≠ «succo pera». Se entrambi i lati hanno
+    // un debole diverso, i due nomi restano distinti.
+    const Aw=Ac.filter(t=>!STOP_WEAK.has(t)), Bw=Bc.filter(t=>!STOP_WEAK.has(t));
+    const aTolto=Aw.length<Ac.length, bTolto=Bw.length<Bc.length;
+    if(Aw.length>=2 && Bw.length>=2 && (aTolto!==bTolto)){   // esattamente UN lato aveva un debole (omissione)
+      const sc=tokenScore(Aw, Bw);
+      if(sc>=0) return sc*FILLER_PEN;
+    }
+    return -1;
   }
   // Chiave della mappa (firme) col punteggio migliore; null se nessuna è lo stesso prodotto.
   function bestMatchKey(nome, map){
     const vs=sig(nome); if(map[vs]) return vs;      // esatto/riordinato (regola 1)
     const A=vs?vs.split(' '):[]; let bk=null, bsc=-1;
-    for(const k in map){ const sc=tokenScore(A, k.split(' ')); if(sc>bsc){ bsc=sc; bk=k; } }
+    for(const k in map){ const sc=matchScore(A, k.split(' ')); if(sc>bsc){ bsc=sc; bk=k; } }
     return (bk && bsc>=0) ? bk : null;
   }
 
@@ -558,7 +623,7 @@
     // assegna alla corsia il cui listino contiene la voce più simile (stesse regole dell'aggancio)
     let bestC=AMB_GEN, bestSc=-1;
     (u.corsie||[]).forEach(c=> (c.scaffali||[]).forEach(sc=> (sc.voci||[]).forEach(v=>{
-      const score=tokenScore(A, sig(v.nome).split(' ').filter(Boolean));
+      const score=matchScore(A, sig(v.nome).split(' ').filter(Boolean));
       if(score>bestSc){ bestSc=score; bestC=c.id; }
     })));
     return bestSc>=0 ? bestC : AMB_GEN;
@@ -1005,15 +1070,22 @@
     try{ el.scrollIntoView({block:'nearest', behavior:'auto'}); }   // BUG2/2a — SEMPRE istantaneo: lo smooth interrompibile causava il «teletrasporto» a inizio pagina
     catch(e){ try{ screen.scrollTop=screen.scrollHeight; }catch(_){} }
   }
+  let keepScroll=false;   // P2 — se true, un re-render CONSERVA la posizione di scorrimento (modifiche in-lista)
   function render(){
-    clearTimers(); if(!keepSpeech) Speech.stop(); S.recording=false;
+    const prevScroll = keepScroll ? screen.scrollTop : 0;   // P2 — cattura lo scroll PRIMA di svuotare lo schermo
+    clearTimers(); if(!keepSpeech){ cancelPendingShelf(); Speech.stop(); } S.recording=false;   // Rev.#1 — annulla il pending PRIMA del flush di stop (uscendo dalla dettatura)
     topbar.innerHTML=''; screen.innerHTML=''; actionbar.innerHTML='';
     actionbar.className='actionbar hidden';
     ({ login:renderLogin, home:renderHome, corsia:renderCorsia,
        dettatura:renderDettatura, stock:renderStock, magazzino:renderMagazzino }[S.screen])();
-    screen.scrollTop=0;
+    // P2 — dopo aver rinominato/spostato una voce NON si torna in cima: si ripristina lo scorrimento (il
+    // browser lo limita da solo se il contenuto e' diventato piu' corto). La navigazione (go) resta in cima.
+    screen.scrollTop = keepScroll ? prevScroll : 0;
+    keepScroll=false;
     salvaDati();   // ogni modifica dati passa da qui: salvataggio automatico (con debounce)
   }
+  // P2 — re-render che conserva lo scorrimento: rinomina / spostamento / eliminazione dentro una lista.
+  function renderKeepScroll(){ keepScroll=true; render(); }
 
   function setTopbar(parts){
     // parts: {back, titleHTML, subHTML, right}
@@ -1164,7 +1236,7 @@
       card.onkeydown=(e)=>{ if(card.querySelector('.inline-edit')) return;
         if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); } };
       card.querySelector('.cc-edit').onclick=(e)=>{ e.stopPropagation();
-        inlineEdit(card.querySelector('.cc-name'), v=>{ c.nome=v; render(); toast('Corsia rinominata'); }); };
+        inlineEdit(card.querySelector('.cc-name'), v=>{ c.nome=v; renderKeepScroll(); toast('Corsia rinominata'); }); };
       list.appendChild(card);
     });
     wrap.appendChild(list);
@@ -1206,7 +1278,9 @@
     actionbar.innerHTML='<button class="btn btn-rec" id="aDetta">'+IC.mic+'Detta</button>'+
                         '<button class="btn" id="aStock">'+IC.box+'Stock</button>'+
                         '<button class="btn" id="aNewShelf" aria-label="Nuovo scaffale">'+IC.plus+'Scaffale</button>';
-    actionbar.querySelector('#aDetta').onclick=()=>go('dettatura',{ dictSid:c.scaffali[0]?c.scaffali[0].id:null });
+    // P1 — non forzare il PRIMO scaffale: entrando in dettatura si punta all'ULTIMO (il piu' recente),
+    // cosi' un nuovo scaffale appena creato riceve subito le voci. Da dentro si puo' comunque cambiare scaffale.
+    actionbar.querySelector('#aDetta').onclick=()=>go('dettatura',{ dictSid:null });
     actionbar.querySelector('#aStock').onclick=()=>go('stock',{ filter:false });
     actionbar.querySelector('#aNewShelf').onclick=()=>{ addShelf(); };
   }
@@ -1221,16 +1295,16 @@
     title.querySelector('.st-kebab').onclick=(e)=>{ e.stopPropagation(); shelfMenu(sc,si); };
     title.querySelector('.st-wrap').onclick=(e)=>{
       if(e.target.closest('.st-kebab')) return;
-      inlineEdit(title.querySelector('.st-wrap'), v=>{ sc.titolo=v; render(); });
+      inlineEdit(title.querySelector('.st-wrap'), v=>{ sc.titolo=v; renderKeepScroll(); });
     };
     sec.appendChild(title);
     sc.voci.forEach((v,vi)=> sec.appendChild(voceRow(sc,v,vi)) );
     const add=document.createElement('button'); add.className='addbtn';
     add.innerHTML=IC.plus+'Aggiungi prodotto';
-    add.onclick=()=>{ const nv={id:nid(),nome:'Nuovo prodotto'}; sc.voci.push(nv); render();
+    add.onclick=()=>{ const nv={id:nid(),nome:'Nuovo prodotto'}; sc.voci.push(nv); renderKeepScroll();   // P2 — non saltare in cima
       // apri subito in edit l'ultima riga
       const rows=screen.querySelectorAll('.voce-name'); const last=[...rows].find(r=>r.dataset.vid===nv.id);
-      if(last) inlineEdit(last, val=>{ nv.nome=val; render(); }); };
+      if(last) inlineEdit(last, val=>{ nv.nome=val; renderKeepScroll(); }); };
     sec.appendChild(add);
     return sec;
   }
@@ -1238,9 +1312,9 @@
   function voceRow(sc,v,vi){
     const row=document.createElement('div'); row.className='voce';
     const name=document.createElement('div'); name.className='voce-name'; name.textContent=v.nome; name.dataset.vid=v.id;
-    name.onclick=()=>inlineEdit(name, val=>{ v.nome=val; render(); });
+    name.onclick=()=>inlineEdit(name, val=>{ v.nome=val; renderKeepScroll(); });
     const px=document.createElement('button'); px.className='rowbtn'; px.innerHTML=IC.pencil; px.setAttribute('aria-label','Modifica testo');
-    px.onclick=()=>inlineEdit(name, val=>{ v.nome=val; render(); });
+    px.onclick=()=>inlineEdit(name, val=>{ v.nome=val; renderKeepScroll(); });
     const kb=document.createElement('button'); kb.className='rowbtn'; kb.setAttribute('aria-label','Azioni riga'); kb.innerHTML=IC.kebab;
     kb.onclick=()=>rowMenu(sc,v,vi);
     row.appendChild(name); row.appendChild(px); row.appendChild(kb);
@@ -1251,9 +1325,9 @@
     bottomSheet(v.nome, null, [
       {label:'Modifica testo', icon:IC.pencil, onClick:()=>{
         const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.vid===v.id);
-        if(el) inlineEdit(el, val=>{ v.nome=val; render(); }); }},
-      {label:'Sposta su', icon:IC.up, onClick:()=>{ if(vi>0){ sc.voci.splice(vi,1); sc.voci.splice(vi-1,0,v); render(); } }},
-      {label:'Sposta giù', icon:IC.down, onClick:()=>{ if(vi<sc.voci.length-1){ sc.voci.splice(vi,1); sc.voci.splice(vi+1,0,v); render(); } }},
+        if(el) inlineEdit(el, val=>{ v.nome=val; renderKeepScroll(); }); }},
+      {label:'Sposta su', icon:IC.up, onClick:()=>{ if(vi>0){ sc.voci.splice(vi,1); sc.voci.splice(vi-1,0,v); renderKeepScroll(); } }},
+      {label:'Sposta giù', icon:IC.down, onClick:()=>{ if(vi<sc.voci.length-1){ sc.voci.splice(vi,1); sc.voci.splice(vi+1,0,v); renderKeepScroll(); } }},
       {label:'Elimina', icon:IC.trash, danger:true, onClick:()=>confirmDeleteVoce(sc,v,vi)},
     ]);
   }
@@ -1262,8 +1336,8 @@
     modal('<h3>Eliminare «'+esc(v.nome)+'»?</h3><p>Puoi annullare subito dopo. L\'azione riguarda solo la tua versione della lista.</p>',
       [ {label:'Annulla'},
         {label:'Elimina', cls:'danger', onClick:()=>{
-          const idx=sc.voci.indexOf(v); sc.voci.splice(idx,1); render();
-          snackbar('«'+v.nome+'» eliminato', 'Annulla', ()=>{ sc.voci.splice(Math.min(idx,sc.voci.length),0,v); render(); });
+          const idx=sc.voci.indexOf(v); sc.voci.splice(idx,1); renderKeepScroll();
+          snackbar('«'+v.nome+'» eliminato', 'Annulla', ()=>{ sc.voci.splice(Math.min(idx,sc.voci.length),0,v); renderKeepScroll(); });
         }} ]);
   }
 
@@ -1274,9 +1348,9 @@
         const el=screen.querySelector('.shelf-title .st-wrap');
         // rinomina via inline sull'elemento corretto
         const titles=[...screen.querySelectorAll('.shelf-title')];
-        const t=titles[si]; if(t) inlineEdit(t.querySelector('.st-wrap'), v=>{ sc.titolo=v; render(); }); }},
-      {label:'Sposta scaffale su', icon:IC.up, onClick:()=>{ if(si>0){ c.scaffali.splice(si,1); c.scaffali.splice(si-1,0,sc); render(); } }},
-      {label:'Sposta scaffale giù', icon:IC.down, onClick:()=>{ if(si<c.scaffali.length-1){ c.scaffali.splice(si,1); c.scaffali.splice(si+1,0,sc); render(); } }},
+        const t=titles[si]; if(t) inlineEdit(t.querySelector('.st-wrap'), v=>{ sc.titolo=v; renderKeepScroll(); }); }},
+      {label:'Sposta scaffale su', icon:IC.up, onClick:()=>{ if(si>0){ c.scaffali.splice(si,1); c.scaffali.splice(si-1,0,sc); renderKeepScroll(); } }},
+      {label:'Sposta scaffale giù', icon:IC.down, onClick:()=>{ if(si<c.scaffali.length-1){ c.scaffali.splice(si,1); c.scaffali.splice(si+1,0,sc); renderKeepScroll(); } }},
       {label:'Elimina scaffale', icon:IC.trash, danger:true, onClick:()=>confirmDeleteShelf(c,sc,si)},
     ]);
   }
@@ -1286,8 +1360,8 @@
     modal('<h3>Eliminare lo scaffale «'+esc(sc.titolo)+'»?</h3><p>Verranno rimossi anche i suoi <b>'+n+' prodotti</b>. L\'azione riguarda solo la tua versione delle liste.</p>',
       [ {label:'Annulla'},
         {label:'Sì, elimina scaffale e '+n+' prodotti', cls:'danger', onClick:()=>{
-          c.scaffali.splice(si,1); render();
-          snackbar('Scaffale «'+sc.titolo+'» eliminato', 'Annulla', ()=>{ c.scaffali.splice(si,0,sc); render(); });
+          c.scaffali.splice(si,1); renderKeepScroll();
+          snackbar('Scaffale «'+sc.titolo+'» eliminato', 'Annulla', ()=>{ c.scaffali.splice(si,0,sc); renderKeepScroll(); });
         }} ]);
   }
   function addShelf(){
@@ -1301,7 +1375,7 @@
       [ {label:'Continua', cls:'primary', onClick:()=>{
           // apri edit sul titolo topbar
           const t=topbar.querySelector('.tb-title');
-          inlineEdit(t, v=>{ c.nome=v; render(); toast('Corsia rinominata'); }); }},
+          inlineEdit(t, v=>{ c.nome=v; renderKeepScroll(); toast('Corsia rinominata'); }); }},
         {label:'Annulla'} ]);
   }
 
@@ -1355,8 +1429,12 @@
   /* ---------- DETTATURA (Sala, riconoscimento vocale reale) ---------- */
   function renderDettatura(){
     const c=corsia();
-    if(!S.dictSid && c.scaffali[0]) S.dictSid=c.scaffali[0].id;
-    const sc=scaffOf(S.dictSid) || c.scaffali[0];
+    // P1 — bersaglio predefinito = ULTIMO scaffale (il piu' recente / quello appena creato), NON il primo:
+    // cosi', creato un nuovo scaffale e ripresa la dettatura, le voci finiscono nel NUOVO scaffale.
+    // Rev.#2 — NIENTE scaffale-fantasma: se la corsia e' senza scaffali NON se ne crea uno al solo ingresso;
+    // lo crea il primo prodotto dettato (commitVoce) o il comando «nuovo scaffale». `sc` puo' quindi essere null.
+    let sc=scaffOf(S.dictSid);
+    if(!sc){ sc=c.scaffali.length ? c.scaffali[c.scaffali.length-1] : null; S.dictSid=sc?sc.id:null; }
     setTopbar({
       titleHTML:'<div class="tb-title tb-rec"><span class="rec-live" style="width:10px;height:10px;border-radius:50%;background:var(--rec);display:inline-block"></span>'+
         (S.recording?'In ascolto…':'Dettatura')+'</div>',
@@ -1368,8 +1446,18 @@
     // Lista scaffale attivo con le sue voci (tap = correzione ibrida da tastiera)
     const block=document.createElement('div');
     if(sc){
-      const title=document.createElement('div'); title.className='shelf-title'; title.textContent=sc.titolo;
-      block.appendChild(title);
+      // P1 — selettore SEMPRE visibile dello scaffale attivo: dice DOVE finiscono le voci e permette di
+      // spostare la dettatura su un ALTRO scaffale (o crearne uno) senza uscire dalla dettatura. Fa anche
+      // da intestazione del blocco (sostituisce il vecchio titolo statico, che ripeteva solo il nome).
+      const pick=document.createElement('button'); pick.type='button';
+      pick.setAttribute('aria-label','Cambia lo scaffale in cui stai dettando');
+      pick.style.cssText='display:flex;align-items:center;gap:8px;width:100%;background:var(--blu-bg);'+
+        'border:1px solid rgba(27,91,215,.25);border-radius:12px;padding:11px 12px;margin:2px 0 10px;'+
+        'font-family:inherit;font-size:14px;color:var(--blu);font-weight:700;cursor:pointer;text-align:left';
+      pick.innerHTML=IC.box+'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+
+        'Detti in: «'+esc(sc.titolo||'Nuovo scaffale')+'»</span><span style="font-weight:800;white-space:nowrap">Cambia ▾</span>';
+      pick.onclick=()=>shelfPicker();
+      block.appendChild(pick);
       sc.voci.forEach(v=>{
         const row=document.createElement('div'); row.className='voce';
         const nm=document.createElement('div'); nm.className='voce-name'; nm.textContent=v.nome; nm.dataset.vid=v.id;
@@ -1396,6 +1484,10 @@
       const prov=document.createElement('div'); prov.className='voce'; prov.id='provRow'; prov.style.display='none';
       prov.innerHTML='<div class="voce-name provisional" id="provText"></div>';
       block.appendChild(prov);
+    } else {
+      // Rev.#2 — corsia senza scaffali: nessun bersaglio ancora. Non si crea uno scaffale-fantasma al solo ingresso;
+      // il primo prodotto dettato (o «Nuovo scaffale») lo crea da sé.
+      block.insertAdjacentHTML('beforeend','<div class="dict-info">Ancora nessuno scaffale: detta il primo prodotto — oppure tocca «Nuovo scaffale» — e verrà creato da sé.</div>');
     }
     // Percorso di autorizzazione / avviso di incompatibilità (in base allo stato reale del microfono)
     if(!Speech.supported){
@@ -1417,6 +1509,8 @@
     area.appendChild(block); area.appendChild(document.createElement('div')).style.height='10px'; area.appendChild(mic);
     screen.appendChild(area);
     if(!micDisabled) document.getElementById('micBtn').onclick=toggleDictation;
+    // P4 — se una richiesta «nuovo scaffale» e' in sospeso durante la dettatura, ripristina il riquadro di conferma
+    if(pendingShelf && S.recording) showShelfConfirm();
 
     actionbar.className='actionbar';
     actionbar.innerHTML='<button class="btn" id="dNew">'+IC.plus+'Nuovo scaffale</button>'+
@@ -1436,6 +1530,7 @@
   function startDictation(){
     if(!Speech.supported || S.recording) return;
     salaQtyAvvisato=false;                                    // R4 — nuova sessione: l'avviso quantità torna a poter comparire
+    cancelPendingShelf();                                     // P4 — nuova sessione: nessuna richiesta scaffale ereditata
     S.recording=true; renderDettaturaKeep();                 // aggiorna badge/label e nasconde il box «Autorizza»
     Speech.start(
       (interim)=>{ showProv(interim); },
@@ -1446,14 +1541,25 @@
   // gestione di ogni risultato «finale» della dettatura di sala
   function handleSalaFinal(txt){
     hideProv();
-    // comando «nuovo scaffale [nome]»: confronto senza punteggiatura, per tollerare il punto finale del motore
+    // comando «nuovo scaffale [nome]»: confronto senza punteggiatura, per tollerare il punto finale del motore.
+    // Si accettano alcune varianti d'esordio (e/poi/crea/apri/aggiungi) e «scaffale/scaffali».
     const nc=norm(txt).replace(/[^\p{L}\p{N} ]+/gu,' ').replace(/\s+/g,' ').trim();
-    const m=nc.match(/^(?:crea |apri )?nuovo scaffale(?: (.+))?$/);
+    const m=nc.match(/^(?:e |poi |crea |apri |aggiungi )?nuovo scaffal[ei](?:\s+(.+))?$/);
     if(m){
-      const nomeScaffale = m[1] ? cap(m[1]) : '';
-      (async()=>{ const ok=await microConfirm(nomeScaffale); if(ok){ doNewShelf(nomeScaffale); } })();
+      // un eventuale connettore iniziale del nome («nuovo scaffale, bibite» → «e bibite») viene rimosso
+      let nome = m[1] ? m[1].replace(/^(?:e |ed |con |il |lo |la |di |chiamato |chiamalo |nome )+/,'').trim() : '';
+      onShelfCommand(nome ? cap(nome) : '');
       return;
     }
+    // P4 — completamento a DUE TEMPI: se e' in corso «nuovo scaffale» in attesa di nome, la frase
+    // successiva (entro la finestra) e' il NOME dello scaffale, NON un prodotto. Crea UN solo scaffale.
+    if(pendingShelf && pendingShelf.awaitingName && (Date.now()-pendingShelfTs) < ATTESA_NOME_MS){
+      const nome=cap(txt.replace(/[.?!…]+$/,'').trim());
+      if(nome){ pendingShelf.nome=nome; confirmPendingShelf(); return; }
+    }
+    // P4 — c'era un «nuovo scaffale» in attesa di conferma ma l'operatore detta altro: la richiesta si
+    // annulla (nessuno scaffale) e la frase viene trattata come un normale prodotto.
+    if(pendingShelf) cancelPendingShelf();
     // R4 — le quantità appartengono all'inventario di magazzino: in sala si salva solo il nome
     const p=parseRiga(txt);
     if(p.quantita.length>0){
@@ -1468,7 +1574,9 @@
     }
     commitVoce(cap(txt));
   }
-  function stopDictation(){ S.recording=false; Speech.stop(); clearTimers(); refreshMic(); hideProv(); }
+  // Rev.#1 — cancelPendingShelf() PRIMA di Speech.stop(): lo stop fa un flush sincrono che, con una richiesta
+  // «nuovo scaffale» in sospeso e un nome ancora nel buffer, la confermerebbe creando uno scaffale indesiderato.
+  function stopDictation(){ cancelPendingShelf(); S.recording=false; Speech.stop(); clearTimers(); refreshMic(); hideProv(); }
   function refreshMic(){
     const b=document.getElementById('micBtn'), l=document.getElementById('micLabel');
     if(!b) return;
@@ -1482,7 +1590,9 @@
   function hideProv(){ const r=document.getElementById('provRow'); if(r){ r.style.display='none'; } }
 
   function commitVoce(text){
-    const sc=scaffOf(S.dictSid); if(!sc) return;
+    // Rev.#2 — creazione pigra: al primo prodotto, se non c'e' scaffale attivo, se ne crea uno (niente voci perse).
+    let sc=scaffOf(S.dictSid);
+    if(!sc){ const c=corsia(); sc={id:nid(), titolo:'Nuovo scaffale', voci:[]}; c.scaffali.push(sc); S.dictSid=sc.id; }
     const last = sc.voci.length ? sc.voci[sc.voci.length-1] : null;
     const nt = norm(text);
     let targetId;
@@ -1518,26 +1628,71 @@
     renderDettatura(); TIMERS=savedTimers.concat(TIMERS); S.recording=wasRec; refreshMic();
     salvaDati();   // la dettatura passa da qui: salvataggio automatico (debounce, non interrompe l'ascolto)
   }
-  function microConfirm(nomeScaffale){
-    return new Promise(resolve=>{
-      const box=document.createElement('div'); box.className='cmd-confirm';
-      const domanda = nomeScaffale
-        ? 'Nuovo scaffale «'+esc(nomeScaffale)+'»? Tocca ✓ per crearlo — oppure continua a dettare'
-        : 'Nuovo scaffale? Dillo di nuovo o tocca ✓ — oppure continua a dettare';
-      box.innerHTML='<div class="ct">'+domanda+'</div>'+
-        '<button id="mcOk">'+IC.check+'</button>';
-      screen.querySelector('.dict-area').after(box);
-      let settled=false;
-      // Conferma reale: tocco su ✓ (oppure ripetere il comando vocale, gestito da handleSalaFinal).
-      box.querySelector('#mcOk').onclick=()=>{ if(settled)return; settled=true; box.remove(); resolve(true); };
-    });
+  // P4 — SOTTOSISTEMA «nuovo scaffale» a stato singolo: garantisce UN solo scaffale per comando.
+  // Riceve il comando vocale; se una richiesta e' gia' in sospeso NON ne crea una seconda.
+  function onShelfCommand(nome){
+    if(pendingShelf){
+      // richiesta gia' in corso: ripetere lo STESSO comando con nome = conferma; con nome nuovo = correzione.
+      if(nome){
+        if(pendingShelf.nome && norm(pendingShelf.nome)===norm(nome)){ confirmPendingShelf(); return; }
+        pendingShelf.nome=nome; pendingShelf.awaitingName=false;
+      }
+      pendingShelfTs=Date.now(); showShelfConfirm();
+      return;
+    }
+    pendingShelf={ nome:nome||'', awaitingName:!nome }; pendingShelfTs=Date.now();
+    showShelfConfirm();
+  }
+  // Riquadro di conferma UNICO (id fisso): mai due riquadri, mai due scaffali. Si re-inserisce dopo ogni
+  // ricostruzione della dettatura finche' la richiesta e' in sospeso (v. fondo di renderDettatura).
+  function showShelfConfirm(){
+    if(!pendingShelf) return;
+    const host=screen.querySelector('.dict-area'); if(!host) return;
+    const old=document.getElementById('shelfCmdBox'); if(old) old.remove();
+    const box=document.createElement('div'); box.className='cmd-confirm'; box.id='shelfCmdBox';
+    const domanda = pendingShelf.awaitingName
+      ? 'Nuovo scaffale: <b>di’ il nome</b> — oppure tocca ✓ per crearlo senza nome'
+      : 'Creo lo scaffale «'+esc(pendingShelf.nome)+'»? Tocca ✓ — oppure continua a dettare per annullare';
+    box.innerHTML='<div class="ct">'+domanda+'</div><button id="mcOk" aria-label="Conferma nuovo scaffale">'+IC.check+'</button>';
+    host.after(box);
+    box.querySelector('#mcOk').onclick=()=>confirmPendingShelf();
+  }
+  function cancelPendingShelf(){
+    pendingShelf=null;
+    const box=document.getElementById('shelfCmdBox'); if(box) box.remove();
+  }
+  function confirmPendingShelf(){
+    if(!pendingShelf) return;
+    const nome=pendingShelf.nome; pendingShelf=null;
+    const box=document.getElementById('shelfCmdBox'); if(box) box.remove();
+    doNewShelf(nome);
   }
   function doNewShelf(nomeScaffale){
     const c=corsia(); const ns={id:nid(), titolo:nomeScaffale||'Nuovo scaffale', voci:[]}; c.scaffali.push(ns);
-    S.dictSid=ns.id; renderDettaturaKeep();
-    toast(nomeScaffale ? 'Scaffale «'+nomeScaffale+'» creato — detta pure le sue voci' : 'Nuovo scaffale creato');
+    S.dictSid=ns.id; renderDettaturaKeep(); try{ screen.scrollTop=screen.scrollHeight; }catch(e){}
+    toast(nomeScaffale ? 'Scaffale «'+nomeScaffale+'» creato — detta pure le sue voci' : 'Nuovo scaffale creato — detta pure le sue voci');
+  }
+  // P1 — selettore dello scaffale in cui si detta: elenco di tutti gli scaffali (l'attivo e' spuntato) +
+  // «Nuovo scaffale». Permette di RIPRENDERE la dettatura su un qualsiasi scaffale, senza uscire.
+  function shelfPicker(){
+    const c=corsia();
+    const items=(c.scaffali||[]).map((s,idx)=>({
+      label:(s.id===S.dictSid?'● ':'')+(s.titolo||('Scaffale '+(idx+1)))+' · '+s.voci.length+(s.voci.length===1?' voce':' voci'),
+      icon:(s.id===S.dictSid?IC.check:IC.box),
+      onClick:()=>setDictShelf(s.id)
+    }));
+    items.push({ label:'Nuovo scaffale…', icon:IC.plus, onClick:()=>manualNewShelf() });
+    bottomSheet('Detta nello scaffale', 'Le voci che detti finiscono nello scaffale scelto. Puoi cambiarlo quando vuoi.', items);
+  }
+  function setDictShelf(id){
+    if(id===S.dictSid){ return; }
+    S.dictSid=id;
+    if(S.recording){ renderDettaturaKeep(); } else render();
+    try{ screen.scrollTop=screen.scrollHeight; }catch(e){}
+    const s=scaffOf(id); if(s) toast('Detti nello scaffale «'+(s.titolo||'Nuovo scaffale')+'»');
   }
   function manualNewShelf(){
+    cancelPendingShelf();   // Rev.#5 — il pulsante manuale annulla un'eventuale richiesta vocale in sospeso (niente box fantasma)
     const c=corsia(); const ns={id:nid(), titolo:'Nuovo scaffale', voci:[]}; c.scaffali.push(ns);
     S.dictSid=ns.id;
     // FUNZIONE D — se si sta dettando, mantenere attivo il riconoscimento (come doNewShelf): render() lo fermerebbe
@@ -1574,8 +1729,8 @@
   // riscontro di una voce di sala: prima l'aggancio manuale (linkId), poi il nome
   // Aggancio UNO-A-UNO per una corsia: ogni prodotto di magazzino (chiave) va ad AL PIÙ una voce di sala,
   // e ogni voce ad al più un prodotto — così NIENTE si aggancia a due cose (nessuna quantità contata due volte).
-  // Priorità: aggancio manuale (linkId), poi esatto/riordinato, poi il refuso più simile; assegnati per
-  // punteggio decrescente senza mai riusare un prodotto già agganciato. Ritorna match (voce→riscontro) e usedRighe.
+  // Priorità: aggancio manuale (linkId), poi esatto/riordinato (1), poi omissione dei riempitivi (0.97);
+  // assegnati per punteggio decrescente senza mai riusare un prodotto già agganciato. Ritorna match e usedRighe.
   function abbinaCorsia(c, inv, map){
     const match=new Map(), takenKey=new Set(), voci=[];
     (c.scaffali||[]).forEach(sc=> (sc.voci||[]).forEach(v=> voci.push(v)));
@@ -1590,13 +1745,13 @@
       match.set(v, grp ? {quantita:grp.quantita, rigaIds:grp.righe.map(x=>x.id)} : {quantita:r.quantita||[], rigaIds:[r.id]});
       if(k) takenKey.add(k);
     });
-    // 2) candidati per nome (esatto=1, refuso≥0), assegnazione uno-a-uno per punteggio decrescente
+    // 2) candidati per nome (esatto=1, refuso no-àncora≈0.9, omissione riempitivi=0.97), assegnazione uno-a-uno per punteggio decrescente
     const keys=Object.keys(map), pairs=[];
     voci.forEach(v=>{
       if(match.has(v)) return;
       const vs=sig(v.nome); if(!vs) return;
       const A=vs.split(' ').filter(Boolean);
-      keys.forEach(k=>{ const s=(k===vs)?1:tokenScore(A, k.split(' ')); if(s>=0) pairs.push({v,k,s}); });
+      keys.forEach(k=>{ const s=(k===vs)?1:matchScore(A, k.split(' ')); if(s>=0) pairs.push({v,k,s}); });
     });
     pairs.sort((a,b)=> b.s-a.s);
     const voceDone=new Set();
@@ -2019,6 +2174,12 @@
   render();
 })();
 </script>
+
+
+
+
+
+
 <script>
 "use strict";
 /* Registrazione del service worker: l'app installata funziona anche offline. */
