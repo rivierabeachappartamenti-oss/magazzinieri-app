@@ -451,7 +451,8 @@
         (c.scaffali||[]).forEach(sc=>{ considera(sc.id); (sc.voci||[]).forEach(v=>considera(v.id)); });
         (c.daAssegnare||[]).forEach(d=>considera(d.id));
       });
-      if(u.inv && Array.isArray(u.inv.righe)) u.inv.righe.forEach(r=>considera(r.id));
+      if(u.inv){ (Array.isArray(u.inv.righe)?u.inv.righe:[]).forEach(r=>considera(r.id));
+                 (Array.isArray(u.inv.staging)?u.inv.staging:[]).forEach(r=>considera(r.id)); }
     });
     uid = max + 1;
   }
@@ -474,6 +475,7 @@
       }
     }catch(e){ /* parse/forma non validi: si tengono i dati demo */ }
     ricalcolaUid();
+    normalizzaTutto();   // R13 — migra i dati (salvati o demo) al modello con ambito d'inventario
   }
 
   // Scrittura effettiva in localStorage. Quota piena o storage negato → avviso una volta, poi silenzioso.
@@ -495,6 +497,36 @@
     if(salvaTimer){ clearTimeout(salvaTimer); salvaTimer=null; }
     scriviOra();
   }
+
+  /* ============ INVENTARIO PER AMBITO (Requisito 13) ============ */
+  // L'inventario di magazzino ha una SELEZIONE D'AMBITO: una corsia di sala (sovrascrive solo
+  // quella, cancellazione differita alla conclusione) oppure «tutte le corsie» (azzera tutto e
+  // si rifà da capo). Ogni riga committata porta il proprio ambito: l'id della corsia a cui
+  // appartiene, o '__gen__' se il suo nome non compare in alcun listino di sala.
+  const AMB_GEN = '__gen__';
+  function ambitoDaNome(u, nome){
+    const key=norm(nome); if(!key) return AMB_GEN;
+    for(const c of (u.corsie||[])){
+      for(const sc of (c.scaffali||[])){
+        if((sc.voci||[]).some(v=>norm(v.nome)===key)) return c.id;
+      }
+    }
+    return AMB_GEN;
+  }
+  // Migrazione idempotente: porta i dati salvati/demo pre-Requisito 13 al modello ad-ambito,
+  // senza perdere nulla. Le righe già presenti in inv.righe diventano l'inventario committato.
+  function normalizzaInv(u){
+    if(!u || !u.inv) return; const inv=u.inv;
+    if(!Array.isArray(inv.staging)) inv.staging=[];
+    if(inv.ambito===undefined) inv.ambito=null;
+    if(inv.ambitoNome===undefined) inv.ambitoNome='';
+    (inv.righe||[]).forEach(r=>{ if(r.ambito===undefined) r.ambito=ambitoDaNome(u, r.nome); });
+    // Vecchio modello: «active:true» con righe committate e nessuna sessione ad-ambito → sessione conclusa.
+    if(inv.active && inv.ambito===null && inv.staging.length===0) inv.active=false;
+  }
+  // Resiliente: un singolo utente malformato non deve mai bloccare l'avvio (gira fuori dal try di caricaDati).
+  function normalizzaTutto(){ Object.keys(DB).forEach(k=>{ try{ normalizzaInv(DB[k]); }catch(e){} }); }
+  function oraOra(){ const n=new Date(); return n.getHours()+':'+String(n.getMinutes()).padStart(2,'0'); }
 
   /* ============ LESSICO UNITÀ (parser quantità) ============ */
   // canonico singolare -> plurale
@@ -1029,6 +1061,7 @@
           Object.keys(DB).forEach(k=>delete DB[k]);
           Object.assign(DB, JSON.parse(JSON.stringify(DEMO_DB)));   // deep copy: DEMO_DB resta intatto
           ricalcolaUid();
+          normalizzaTutto();   // R13 — i dati demo ripristinati adottano il modello ad-ambito
           go('login');
           toast('Dati di esempio ripristinati');
         }} ]);
@@ -1588,6 +1621,47 @@
     bottomSheet('Assegna «'+riga.nome+'»', 'Scegli la voce di sala a cui agganciare questa riga di magazzino (senza rinominarla).', items);
   }
 
+  /* ---------- INVENTARIO: avvio con selezione d'ambito, annullamento ---------- */
+  // Avvio: NON cancella nulla (cancellazione differita, §1.8.14). La sessione accumula in
+  // inv.staging; l'inventario precedente resta consultabile in sala finché non si conclude.
+  function avviaInventario(ambito, ambitoNome){
+    const inv=U().inv;
+    inv.active=true; inv.ambito=ambito; inv.ambitoNome=ambitoNome;
+    inv.staging=[]; inv.iniziata=oraOra();
+    render();
+    toast(ambito==='ALL' ? 'Inventario totale avviato' : ('Inventario avviato · '+ambitoNome));
+  }
+  // Selezione preliminare d'ambito (§1.8.13): una corsia di sala, oppure tutte le corsie.
+  function startInventoryDialog(){
+    const u=U();
+    if(!u.corsie.length){ avviaInventario('ALL','Tutte le corsie'); return; }   // nessuna corsia: solo totale
+    const items=[];
+    u.corsie.forEach(c=>{ items.push({ label:c.nome, icon:IC.box,
+      onClick:()=>avviaInventario(c.id, c.nome) }); });
+    items.push({ label:'Tutte le corsie — inventario totale', icon:IC.trash, danger:true,
+      onClick:()=>confermaTotale() });
+    bottomSheet('Nuovo inventario di magazzino',
+      'Scegli l\'ambito. Una corsia: sovrascrivi solo quella. Tutte le corsie: azzeri tutto e rifai da capo.',
+      items);
+  }
+  function confermaTotale(){
+    modal('<h3>Inventario di TUTTE le corsie?</h3><p>Alla conclusione verranno <b>azzerate tutte le quantità</b> '+
+      'dell\'inventario precedente di tutte le tue corsie, e l\'inventario risulterà rifatto da capo. '+
+      'Finché non concludi, i dati attuali restano al loro posto.</p>',
+      [ {label:'Annulla'},
+        {label:'Sì, inventario totale', cls:'danger', onClick:()=>avviaInventario('ALL','Tutte le corsie') } ]);
+  }
+  // Annullamento della sessione in corso: scarta lo staging, l'inventario committato resta invariato.
+  function annullaInventario(){
+    const inv=U().inv; const n=inv.staging.length;
+    modal('<h3>Annullare l\'inventario in corso?</h3><p>Le <b>'+n+'</b> voci dettate in questa sessione '+
+      'verranno scartate. L\'inventario precedente resta invariato.</p>',
+      [ {label:'Continua a dettare'},
+        {label:'Sì, annulla', cls:'danger', onClick:()=>{
+          inv.staging=[]; inv.active=false; inv.ambito=null; inv.ambitoNome='';
+          render(); toast('Inventario annullato'); }} ]);
+  }
+
   /* ---------- MAGAZZINO (Inventario) ---------- */
   function renderMagazzino(){
     const u=U(); const inv=u.inv;
@@ -1596,10 +1670,11 @@
       subHTML:'<div class="tb-sub">Settore '+esc(u.settore)+'</div>' });
 
     if(inv.active){
+      // SESSIONE IN CORSO — si detta nel blocco di staging; l'ambito è mostrato nel banner.
       const banner=document.createElement('div'); banner.className='inv-banner';
       banner.innerHTML='<span class="rec-live"></span><span class="txt"><b>Inventario in corso</b>'+
-        '<small>'+esc(inv.settore)+' · iniziato '+esc(inv.iniziata)+'</small></span>'+
-        '<span class="inv-count">'+inv.righe.length+'</span>';
+        '<small>'+esc(inv.ambitoNome||inv.settore)+' · iniziato '+esc(inv.iniziata)+'</small></span>'+
+        '<span class="inv-count">'+inv.staging.length+'</span>';
       screen.appendChild(banner);
 
       const wrap=document.createElement('div');
@@ -1615,13 +1690,18 @@
       } else if(Speech.permesso!=='granted' && !S.magRecording){
         wrap.appendChild(micAuthButton(()=>startMagDictation()));   // permesso concesso → avvia subito la dettatura
       }
-      inv.righe.forEach(r=> wrap.appendChild(magRow(r)) );
+      // Promemoria d'ambito nella modalità settoriale: si detta SOLO ciò che appartiene alla corsia.
+      if(inv.ambito!=='ALL'){
+        wrap.insertAdjacentHTML('beforeend','<div class="dict-info">Detta solo le voci di <b>'+esc(inv.ambitoNome)+
+          '</b>. Alla conclusione verrà sovrascritta soltanto questa corsia; le altre restano intatte.</div>');
+      }
+      inv.staging.forEach(r=> wrap.appendChild(magRow(r)) );
       // R3 — riga provvisoria: mostra in diretta ciò che il motore sta scrivendo (solo durante l'ascolto)
       const mprov=document.createElement('div'); mprov.className='voce'; mprov.id='magProvRow'; mprov.style.display='none';
       mprov.innerHTML='<div class="voce-name provisional" id="magProvText"></div>';
       wrap.appendChild(mprov);
       const add=document.createElement('button'); add.className='addbtn'; add.innerHTML=IC.plus+'Aggiungi voce';
-      add.onclick=()=>{ const nr={id:nid(), nome:'Nuova voce', quantita:[], raw:'Nuova voce'}; inv.righe.push(nr); render();
+      add.onclick=()=>{ const nr={id:nid(), nome:'Nuova voce', quantita:[], raw:'Nuova voce'}; inv.staging.push(nr); render();
         const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.rid===nr.id);
         if(el) editMagRow(el, nr); };
       wrap.appendChild(add);
@@ -1634,15 +1714,39 @@
           '<button class="btn btn-rec" id="mDetta"'+(dettaDisabled?' aria-disabled="true" style="opacity:.5;cursor:default"':'')+'>'+IC.mic+(S.magRecording?'Ferma':'Detta')+'</button>'+
           '<button class="btn btn-primary" id="mClose">'+IC.check+'Concludi</button>'+
         '</div>'+
-        '<button class="btn btn-danger-soft" id="mNew">'+IC.trash+'Nuovo inventario (cancella il precedente)</button>';
+        '<button class="btn btn-danger-soft" id="mCancel">'+IC.trash+'Annulla inventario</button>';
       if(!dettaDisabled) actionbar.querySelector('#mDetta').onclick=()=>magDictate();
       actionbar.querySelector('#mClose').onclick=()=>closeInventory();
-      actionbar.querySelector('#mNew').onclick=()=>newInventoryDialog();
+      actionbar.querySelector('#mCancel').onclick=()=>annullaInventario();
     } else {
-      screen.insertAdjacentHTML('beforeend','<div class="empty-note" style="padding-top:40px">Nessun inventario in corso per il settore <b>'+esc(u.settore)+'</b>.<br>Avvia una nuova sessione per iniziare a elencare i prodotti.</div>');
+      // NESSUNA SESSIONE — riepilogo dell'ultimo inventario committato + avvio con selezione d'ambito.
+      const righe=inv.righe||[];
+      if(righe.length){
+        const info=document.createElement('div'); info.className='stock-note';
+        info.innerHTML=IC.box+esc('Ultimo inventario di magazzino: '+righe.length+(righe.length===1?' voce registrata':' voci registrate'));
+        screen.appendChild(info);
+        // elenco di sola lettura, raggruppato per corsia d'ambito
+        const wrap=document.createElement('div');
+        const perAmb={};
+        righe.forEach(r=>{ const k=r.ambito||AMB_GEN; (perAmb[k]=perAmb[k]||[]).push(r); });
+        const nomeAmb=(k)=>{ if(k===AMB_GEN) return 'Non nel listino di sala';
+          const c=(u.corsie||[]).find(x=>x.id===k); return c?c.nome:'Corsia rimossa'; };
+        Object.keys(perAmb).forEach(k=>{
+          wrap.insertAdjacentHTML('beforeend','<div class="section-h">'+esc(nomeAmb(k))+'</div>');
+          perAmb[k].forEach(r=>{
+            const row=document.createElement('div'); row.className='voce';
+            const q=fmtQuantita(r.quantita);
+            row.innerHTML='<div class="voce-name" style="cursor:default">'+esc(q?(r.nome+' — '+q):r.nome)+'</div>';
+            wrap.appendChild(row);
+          });
+        });
+        screen.appendChild(wrap);
+      } else {
+        screen.insertAdjacentHTML('beforeend','<div class="empty-note" style="padding-top:40px">Nessun inventario ancora registrato per il settore <b>'+esc(u.settore)+'</b>.<br>Avvia una sessione scegliendo l\'ambito (una corsia o tutte).</div>');
+      }
       actionbar.className='actionbar';
       actionbar.innerHTML='<button class="btn btn-primary" id="mStart">'+IC.plus+'Nuovo inventario</button>';
-      actionbar.querySelector('#mStart').onclick=()=>{ inv.active=true; inv.iniziata='10:15'; render(); toast('Inventario avviato'); };
+      actionbar.querySelector('#mStart').onclick=()=>startInventoryDialog();
     }
   }
   function magRow(r){
@@ -1653,11 +1757,11 @@
     nm.onclick=()=>editMagRow(nm, r);
     const kb=document.createElement('button'); kb.className='rowbtn'; kb.innerHTML=IC.trash; kb.setAttribute('aria-label','Elimina voce');
     kb.onclick=()=>{
-      const inv=U().inv; const i=inv.righe.indexOf(r); if(i<0) return;
+      const inv=U().inv; const i=inv.staging.indexOf(r); if(i<0) return;
       // FUNZIONE D/D2 — se si sta dettando, ricostruire senza fermare il riconoscimento (come flashMagRow)
       const rebuild=()=>{ if(S.magRecording){ keepSpeech=true; render(); keepSpeech=false; try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render(); };
-      inv.righe.splice(i,1); rebuild();
-      snackbar('Voce eliminata','Annulla',()=>{ inv.righe.splice(Math.min(i,inv.righe.length),0,r); rebuild(); });
+      inv.staging.splice(i,1); rebuild();
+      snackbar('Voce eliminata','Annulla',()=>{ inv.staging.splice(Math.min(i,inv.staging.length),0,r); rebuild(); });
     };
     row.appendChild(nm); row.appendChild(kb); return row;
   }
@@ -1710,7 +1814,7 @@
   function magCommit(txt){
     const inv=U().inv; const p=parseRiga(txt);
     const nomeVuoto = !p.nome || !p.nome.trim();
-    const last = inv.righe.length ? inv.righe[inv.righe.length-1] : null;
+    const last = inv.staging.length ? inv.staging[inv.staging.length-1] : null;
 
     // R2 — quantità dette DOPO una pausa (risultato finale separato, senza nome): allacciarle all'ultima riga
     if(nomeVuoto && p.quantita.length>0){
@@ -1746,51 +1850,63 @@
     }
 
     const nr={id:nid(), nome:cap(p.nome), quantita:p.quantita, raw:txt};
-    inv.righe.push(nr);
+    inv.staging.push(nr);
     tsCommitMag=Date.now();
     flashMagRow(nr.id);
   }
-  function newInventoryDialog(){
-    const inv=U().inv;
-    modal('<h3>Iniziare un nuovo inventario?</h3><p>Il tuo inventario precedente di <b>'+esc(inv.settore)+
-      '</b> (creato il <b>'+esc(inv.prevData)+'</b>, <b>'+inv.prevCount+' voci</b>) verrà cancellato definitivamente. '+
-      'Gli inventari degli altri magazzinieri non sono toccati.</p>',
-      [ {label:'Continua l\'inventario esistente'},
-        {label:'Annulla'},
-        {label:'Sì, cancella e inizia', cls:'danger', onClick:()=>{
-          inv.righe=[]; inv.prevData='oggi'; inv.iniziata='10:15'; render();
-          toast('Nuovo inventario avviato — il precedente si cancella al primo salvataggio'); }} ]);
-  }
+  // Conclusione: applica la sovrascrittura secondo l'ambito, poi il resoconto sull'ambito.
   function closeInventory(){
-    const inv=U().inv; if(!inv.righe.length){ toast('Aggiungi almeno una voce'); return; }
-    purgeLinkOrfani(inv);   // BUG3 — il riepilogo di chiusura si calcola dal vivo, senza agganci fantasma
-    // FUNZIONE C — utente senza corsie (profilo appena creato, corsie:[]): niente riscontro di sala da aggiornare.
-    // Si chiude comunque con un riepilogo essenziale, senza toccare corsie[0] (undefined → «Cannot set fresh» crash).
-    if(!U().corsie.length){
+    const u=U(); const inv=u.inv;
+    if(!inv.active){ return; }
+    if(!inv.staging.length){ toast('Aggiungi almeno una voce'); return; }
+    const totale = (inv.ambito==='ALL');
+    const scopeId = inv.ambito, scopeNome = inv.ambitoNome;
+    // 1) ogni riga dettata riceve il proprio ambito: la corsia scelta (settoriale) o per nome (totale)
+    inv.staging.forEach(r=>{ r.ambito = totale ? ambitoDaNome(u, r.nome) : scopeId; });
+    // 2) sovrascrittura (§1.8.14–15). Totale: azzera tutto e riparte dalle sole righe dettate.
+    //    Settoriale: rimpiazza TUTTE le righe di quella corsia (sovrascrittura totale del settore) più
+    //    eventuali omonime di altri ambiti, così lo stesso prodotto non resta duplicato nel magazzino.
+    if(totale){
+      inv.righe = inv.staging.slice();
+    } else {
+      const nomiNuovi = new Set(inv.staging.map(r=>norm(r.nome)));
+      inv.righe = (inv.righe||[]).filter(r=> r.ambito!==scopeId && !nomiNuovi.has(norm(r.nome))).concat(inv.staging);
+    }
+    inv.staging=[]; inv.active=false; inv.ambito=null; inv.ambitoNome='';
+    inv.prevData='oggi'; inv.prevCount=inv.righe.length;
+    purgeLinkOrfani(inv);   // BUG3 — nessun aggancio fantasma sopravvive alla sovrascrittura
+    // FUNZIONE C — utente senza corsie: chiusura con riepilogo essenziale, senza toccare corsie[0].
+    if(!u.corsie.length){
       salvaDati();
-      modal('<h3>Inventario riordinato</h3><p><b>'+inv.righe.length+'</b> voci elaborate.<br>'+
+      modal('<h3>Inventario concluso</h3><p><b>'+inv.righe.length+'</b> voci registrate.<br>'+
         'Non hai ancora corsie in sala a cui agganciare il riscontro: crea una corsia dalla Home per la consultazione.</p>',
         [ {label:'Torna alla home', cls:'primary', onClick:()=>go('home',{homeTab:'sala'}) } ], false);
-      toast('Inventario chiuso');
+      toast('Inventario concluso');
       return;
     }
-    const c=U().corsie[0]; c.fresh={state:'fresh', label:'Inventario: oggi 10:31'};
+    // 3) freschezza timbrata SOLO sulle corsie in ambito (settoriale = solo quella; totale = tutte).
+    //    Così l'etichetta «Inventario: oggi …» non è più condivisa da corsie non inventariate.
+    const corsieAmbito = totale ? u.corsie : u.corsie.filter(c=>c.id===scopeId);
+    const stamp='Inventario: oggi '+oraOra();
+    corsieAmbito.forEach(c=>{ c.fresh={state:'fresh', label:stamp}; });
     salvaDati();   // la modifica precede il modal: salvataggio esplicito per mantenere l'invariante
-    // riepilogo calcolato dall'aggancio dinamico per nome sulla prima corsia
+    // 4) resoconto calcolato per nome SULLE SOLE corsie in ambito; approdo sulla corsia inventariata
     const map=buildInvMap(inv); let agg=0, senza=0; const used=new Set();
-    c.scaffali.forEach(sc=> sc.voci.forEach(v=>{
+    corsieAmbito.forEach(c=> c.scaffali.forEach(sc=> sc.voci.forEach(v=>{
       const m=resolveMatch(v, inv, map);
       if(m){ agg++; m.rigaIds.forEach(id=>used.add(id)); } else senza++;
-    }));
-    const soli=(inv.righe||[]).filter(r=>!used.has(r.id)).length;
-    modal('<h3>Inventario riordinato</h3><p><b>'+inv.righe.length+'</b> voci elaborate.<br>'+
+    })));
+    const righeAmbito = totale ? inv.righe : inv.righe.filter(r=>r.ambito===scopeId);
+    const soli = righeAmbito.filter(r=>!used.has(r.id)).length;
+    const dest = (corsieAmbito[0] || u.corsie[0]).id;
+    modal('<h3>Inventario concluso</h3><p>Ambito: <b>'+esc(scopeNome)+'</b> · <b>'+righeAmbito.length+'</b> voci di magazzino.<br>'+
       'Agganciate al listino di sala: <b>'+agg+'</b> · '+
       'Voci di sala senza riscontro: <b>'+senza+'</b> · '+
       'Solo in magazzino: <b>'+soli+'</b>.</p>',
-      [ {label:'Vai alla consultazione in sala', cls:'primary', onClick:()=>{ go('corsia',{corsiaId:U().corsie[0].id});
+      [ {label:'Vai alla consultazione in sala', cls:'primary', onClick:()=>{ go('corsia',{corsiaId:dest});
           setTimeout(()=>go('stock',{filter:false}),10); }},
         {label:'Torna alla home', onClick:()=>go('home',{homeTab:'sala'}) } ], false);
-    toast('Inventario chiuso e riordinato');
+    toast('Inventario concluso · '+scopeNome);
   }
 
   /* ============ AVVIO ============ */
