@@ -1908,15 +1908,23 @@
     const stamp='Inventario: oggi '+oraOra();
     corsieAmbito.forEach(c=>{ c.fresh={state:'fresh', label:stamp}; });
     salvaDati();   // la modifica precede il modal: salvataggio esplicito per mantenere l'invariante
-    // 4) resoconto calcolato per nome SULLE SOLE corsie in ambito; approdo sulla corsia inventariata
+    // 4) resoconto calcolato per nome SULLE SOLE corsie in ambito. L'approdo va sulla corsia con PIÙ
+    //    agganci: nel totale evita di atterrare su una corsia estranea al dettato (che mostrerebbe
+    //    «0 agganciate» pur avendo il resoconto contato gli agganci nelle altre); nel settoriale
+    //    coincide comunque con la corsia dell'ambito (unica in esame).
     const map=buildInvMap(inv); let agg=0, senza=0; const used=new Set();
-    corsieAmbito.forEach(c=> c.scaffali.forEach(sc=> sc.voci.forEach(v=>{
-      const m=resolveMatch(v, inv, map);
-      if(m){ agg++; m.rigaIds.forEach(id=>used.add(id)); } else senza++;
-    })));
+    let bestC=null, bestAgg=-1;
+    corsieAmbito.forEach(c=>{
+      let cAgg=0;
+      c.scaffali.forEach(sc=> sc.voci.forEach(v=>{
+        const m=resolveMatch(v, inv, map);
+        if(m){ agg++; cAgg++; m.rigaIds.forEach(id=>used.add(id)); } else senza++;
+      }));
+      if(cAgg>bestAgg){ bestAgg=cAgg; bestC=c; }
+    });
     const righeAmbito = totale ? inv.righe : inv.righe.filter(r=>r.ambito===scopeId);
     const soli = righeAmbito.filter(r=>!used.has(r.id)).length;
-    const dest = (corsieAmbito[0] || u.corsie[0]).id;
+    const dest = (bestC || u.corsie[0]).id;
     modal('<h3>Inventario concluso</h3><p>Ambito: <b>'+esc(scopeNome)+'</b> · <b>'+righeAmbito.length+'</b> voci di magazzino.<br>'+
       'Agganciate al listino di sala: <b>'+agg+'</b> · '+
       'Voci di sala senza riscontro: <b>'+senza+'</b> · '+
