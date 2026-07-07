@@ -432,6 +432,55 @@
   const norm = (s)=> String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
   const cap = (s)=>{ s=String(s==null?'':s).trim(); return s? s.charAt(0).toUpperCase()+s.slice(1) : s; };
 
+  /* ---- Confronto nomi tollerante per l'aggancio listino↔magazzino ----
+     Due regole che lavorano INSIEME:
+     1) ordine delle parole indifferente: «Coca Cola 1L» = «1L Coca Cola» (firma con parole ordinate);
+     2) refusi della STESSA parola (una-due-tre lettere): «Mogu Mogu» = «Mogo Mogo», «Mozzarella» = «Mozarella».
+     Il confronto è PAROLA PER PAROLA: parole DIVERSE non si agganciano (pesca ≠ pera), e i numeri devono
+     coincidere (1L ≠ 2L, 500g ≠ 600g: formati/quantità diversi non sono un refuso). */
+  // firma: minuscolo/senza accenti (norm), decimali uniti (1,5 = 1.5 = 15), punteggiatura→spazio
+  // (Coca-Cola = Coca Cola, S.Pellegrino = S Pellegrino), parole ORDINATE (ordine indifferente).
+  function sig(nome){ return norm(nome).replace(/(\d)[.,](\d)/g,'$1$2').replace(/[^a-z0-9\s]+/g,' ').split(' ').filter(Boolean).sort().join(' '); }
+  function lev(a,b){
+    if(a===b) return 0; const m=a.length, n=b.length; if(!m) return n; if(!n) return m;
+    let prev=new Array(n+1); for(let j=0;j<=n;j++) prev[j]=j;
+    for(let i=1;i<=m;i++){ let cur=[i];
+      for(let j=1;j<=n;j++){ const cost=a.charCodeAt(i-1)===b.charCodeAt(j-1)?0:1;
+        cur[j]=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost); }
+      prev=cur; }
+    return prev[n];
+  }
+  const WORD_MIN=0.70, WORD_MAX_EDITS=3;   // somiglianza minima fra due parole, e refuso massimo (tre lettere)
+  // Somiglianza fra due PAROLE (0..1). Le parole con numeri contano solo se identiche (1L≠2L, 500g≠600g);
+  // oltre tre lettere di differenza è una parola diversa, non un refuso.
+  function wordSim(a,b){
+    if(a===b) return 1;
+    if(/\d/.test(a) || /\d/.test(b)) return 0;
+    const d=lev(a,b); if(d>WORD_MAX_EDITS) return 0;
+    const ml=Math.max(a.length,b.length); return ml ? 1 - d/ml : 0;
+  }
+  // Punteggio fra due elenchi di parole: -1 se NON è lo stesso prodotto, altrimenti somiglianza media (1=identici).
+  // Ogni parola deve abbinarsi a UNA parola dell'altro nome con somiglianza ≥ soglia: i refusi della stessa
+  // parola passano, ma una parola diversa (pesca vs pera) fa fallire l'aggancio. Serve lo stesso numero di parole.
+  function tokenScore(A,B){
+    if(!A.length || A.length!==B.length) return -1;
+    const used=new Array(B.length).fill(false); let tot=0;
+    for(const wa of A){
+      let bj=-1, bs=-1;
+      for(let j=0;j<B.length;j++){ if(used[j]) continue; const s=wordSim(wa,B[j]); if(s>bs){ bs=s; bj=j; } }
+      if(bj<0 || bs<WORD_MIN) return -1;
+      used[bj]=true; tot+=bs;
+    }
+    return tot/A.length;
+  }
+  // Chiave della mappa (firme) col punteggio migliore; null se nessuna è lo stesso prodotto.
+  function bestMatchKey(nome, map){
+    const vs=sig(nome); if(map[vs]) return vs;      // esatto/riordinato (regola 1)
+    const A=vs?vs.split(' '):[]; let bk=null, bsc=-1;
+    for(const k in map){ const sc=tokenScore(A, k.split(' ')); if(sc>bsc){ bsc=sc; bk=k; } }
+    return (bk && bsc>=0) ? bk : null;
+  }
+
   /* ============ PERSISTENZA (localStorage) — salvataggio automatico permanente ============ */
   // Tutto ciò che l'operatore crea o modifica si salva da sé, sempre: cambiando facciata,
   // chiudendo l'app, riavviando il telefono. Nessun pulsante «salva».
@@ -505,13 +554,14 @@
   // appartiene, o '__gen__' se il suo nome non compare in alcun listino di sala.
   const AMB_GEN = '__gen__';
   function ambitoDaNome(u, nome){
-    const key=norm(nome); if(!key) return AMB_GEN;
-    for(const c of (u.corsie||[])){
-      for(const sc of (c.scaffali||[])){
-        if((sc.voci||[]).some(v=>norm(v.nome)===key)) return c.id;
-      }
-    }
-    return AMB_GEN;
+    const A=sig(nome).split(' ').filter(Boolean); if(!A.length) return AMB_GEN;
+    // assegna alla corsia il cui listino contiene la voce più simile (stesse regole dell'aggancio)
+    let bestC=AMB_GEN, bestSc=-1;
+    (u.corsie||[]).forEach(c=> (c.scaffali||[]).forEach(sc=> (sc.voci||[]).forEach(v=>{
+      const score=tokenScore(A, sig(v.nome).split(' ').filter(Boolean));
+      if(score>bestSc){ bestSc=score; bestC=c.id; }
+    })));
+    return bestSc>=0 ? bestC : AMB_GEN;
   }
   // Migrazione idempotente: porta i dati salvati/demo pre-Requisito 13 al modello ad-ambito,
   // senza perdere nulla. Le righe già presenti in inv.righe diventano l'inventario committato.
@@ -1506,7 +1556,7 @@
   function buildInvMap(inv){
     const map={};
     (inv.righe||[]).forEach(r=>{
-      const key=norm(r.nome); if(!key) return;
+      const key=sig(r.nome); if(!key) return;   // firma ordinata: «Coca Cola» e «Cola Coca» stessa chiave
       if(!map[key]) map[key]={ quantita:mergeQ([], r.quantita), righe:[r] };
       else { map[key].quantita=mergeQ(map[key].quantita, r.quantita); map[key].righe.push(r); }
     });
@@ -1522,28 +1572,50 @@
     })));
   }
   // riscontro di una voce di sala: prima l'aggancio manuale (linkId), poi il nome
-  function resolveMatch(v, inv, map){
-    if(v.linkId){
+  // Aggancio UNO-A-UNO per una corsia: ogni prodotto di magazzino (chiave) va ad AL PIÙ una voce di sala,
+  // e ogni voce ad al più un prodotto — così NIENTE si aggancia a due cose (nessuna quantità contata due volte).
+  // Priorità: aggancio manuale (linkId), poi esatto/riordinato, poi il refuso più simile; assegnati per
+  // punteggio decrescente senza mai riusare un prodotto già agganciato. Ritorna match (voce→riscontro) e usedRighe.
+  function abbinaCorsia(c, inv, map){
+    const match=new Map(), takenKey=new Set(), voci=[];
+    (c.scaffali||[]).forEach(sc=> (sc.voci||[]).forEach(v=> voci.push(v)));
+    // 1) agganci manuali: priorità assoluta, bloccano il prodotto
+    voci.forEach(v=>{
+      if(!v.linkId) return;
       const r=(inv.righe||[]).find(x=>x.id===v.linkId);
-      if(r) return { quantita:r.quantita||[], rigaIds:[r.id] };
-      // BUG3 — aggancio fantasma: la riga agganciata non esiste più. Si azzera il linkId orfano
-      // e si prosegue col match per nome (difesa puntuale, oltre a purgeLinkOrfani a monte).
-      delete v.linkId;
-    }
-    const m=map[norm(v.nome)];
-    if(m) return { quantita:m.quantita, rigaIds:m.righe.map(r=>r.id) };
-    return null;
+      if(!r){ delete v.linkId; return; }   // BUG3 — linkId orfano: si azzera e si passa al match per nome
+      const k=sig(r.nome), grp=map[k];
+      match.set(v, grp ? {quantita:grp.quantita, rigaIds:grp.righe.map(x=>x.id)} : {quantita:r.quantita||[], rigaIds:[r.id]});
+      if(k) takenKey.add(k);
+    });
+    // 2) candidati per nome (esatto=1, refuso≥0), assegnazione uno-a-uno per punteggio decrescente
+    const keys=Object.keys(map), pairs=[];
+    voci.forEach(v=>{
+      if(match.has(v)) return;
+      const vs=sig(v.nome); if(!vs) return;
+      const A=vs.split(' ').filter(Boolean);
+      keys.forEach(k=>{ const s=(k===vs)?1:tokenScore(A, k.split(' ')); if(s>=0) pairs.push({v,k,s}); });
+    });
+    pairs.sort((a,b)=> b.s-a.s);
+    const voceDone=new Set();
+    pairs.forEach(p=>{
+      if(voceDone.has(p.v) || takenKey.has(p.k)) return;
+      const grp=map[p.k];
+      match.set(p.v, {quantita:grp.quantita, rigaIds:grp.righe.map(r=>r.id)});
+      voceDone.add(p.v); takenKey.add(p.k);
+    });
+    const usedRighe=new Set();
+    match.forEach(m=> m.rigaIds.forEach(id=>usedRighe.add(id)));
+    return { match, usedRighe };
   }
   function renderStock(){
     const c=corsia(); const inv=U().inv;
     purgeLinkOrfani(inv);              // BUG3 — nessun aggancio fantasma sopravvive: si ricalcola sempre dal vivo
     const map=buildInvMap(inv);
-    // conteggi complessivi (non filtrati) e insieme delle righe di magazzino agganciate
-    let agganci=0, senza=0; const used=new Set();
-    c.scaffali.forEach(sc=> sc.voci.forEach(v=>{
-      const m=resolveMatch(v, inv, map);
-      if(m){ agganci++; m.rigaIds.forEach(id=>used.add(id)); } else senza++;
-    }));
+    // aggancio UNO-A-UNO: nessun prodotto di magazzino finisce su due voci di sala
+    const {match, usedRighe}=abbinaCorsia(c, inv, map);
+    let agganci=0, senza=0;
+    c.scaffali.forEach(sc=> sc.voci.forEach(v=>{ if(match.has(v)) agganci++; else senza++; }));
     const hasData=(inv.righe||[]).length>0;
 
     setTopbar({ back:true, onBack:()=>go('corsia'),
@@ -1569,7 +1641,7 @@
     c.scaffali.forEach(sc=>{
       const rows=[];
       sc.voci.forEach(v=>{
-        const m=resolveMatch(v, inv, map);
+        const m=match.get(v)||null;
         const has=!!m, zero=has && qIsZero(m.quantita);
         if(S.filter && !(zero || !has)) return;   // «Solo mancanti»: riscontro 0 o assente
         rows.push(stockRow(v, m, has, zero));
@@ -1587,7 +1659,7 @@
     });
 
     // Sezione finale: righe di magazzino che non agganciano alcuna voce di sala
-    const soli=(inv.righe||[]).filter(r=>!used.has(r.id));
+    const soli=(inv.righe||[]).filter(r=>!usedRighe.has(r.id));
     if(soli.length && !S.filter){
       screen.insertAdjacentHTML('beforeend','<div class="section-h">Solo in magazzino · non nel listino</div>');
       soli.forEach(r=>{
@@ -1915,11 +1987,10 @@
     const map=buildInvMap(inv); let agg=0, senza=0; const used=new Set();
     let bestC=null, bestAgg=-1;
     corsieAmbito.forEach(c=>{
+      const {match, usedRighe}=abbinaCorsia(c, inv, map);   // uno-a-uno anche nel resoconto
       let cAgg=0;
-      c.scaffali.forEach(sc=> sc.voci.forEach(v=>{
-        const m=resolveMatch(v, inv, map);
-        if(m){ agg++; cAgg++; m.rigaIds.forEach(id=>used.add(id)); } else senza++;
-      }));
+      c.scaffali.forEach(sc=> sc.voci.forEach(v=>{ if(match.has(v)){ agg++; cAgg++; } else senza++; }));
+      usedRighe.forEach(id=>used.add(id));
       if(cAgg>bestAgg){ bestAgg=cAgg; bestC=c; }
     });
     const righeAmbito = totale ? inv.righe : inv.righe.filter(r=>r.ambito===scopeId);
