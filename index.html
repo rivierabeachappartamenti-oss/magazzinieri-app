@@ -1584,7 +1584,9 @@
       if(!v.linkId) return;
       const r=(inv.righe||[]).find(x=>x.id===v.linkId);
       if(!r){ delete v.linkId; return; }   // BUG3 — linkId orfano: si azzera e si passa al match per nome
-      const k=sig(r.nome), grp=map[k];
+      const k=sig(r.nome);
+      if(k && takenKey.has(k)) return;      // prodotto già agganciato (a mano) a un'altra voce: uno-a-uno
+      const grp=map[k];
       match.set(v, grp ? {quantita:grp.quantita, rigaIds:grp.righe.map(x=>x.id)} : {quantita:r.quantita||[], rigaIds:[r.id]});
       if(k) takenKey.add(k);
     });
@@ -1959,8 +1961,8 @@
     if(totale){
       inv.righe = inv.staging.slice();
     } else {
-      const nomiNuovi = new Set(inv.staging.map(r=>norm(r.nome)));
-      inv.righe = (inv.righe||[]).filter(r=> r.ambito!==scopeId && !nomiNuovi.has(norm(r.nome))).concat(inv.staging);
+      const nomiNuovi = new Set(inv.staging.map(r=>sig(r.nome)));   // firma (ordine indifferente), coerente con l'aggancio
+      inv.righe = (inv.righe||[]).filter(r=> r.ambito!==scopeId && !nomiNuovi.has(sig(r.nome))).concat(inv.staging);
     }
     inv.staging=[]; inv.active=false; inv.ambito=null; inv.ambitoNome='';
     inv.prevData='oggi'; inv.prevCount=inv.righe.length;
