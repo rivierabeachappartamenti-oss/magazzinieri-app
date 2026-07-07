@@ -521,12 +521,20 @@
     if(inv.ambito===undefined) inv.ambito=null;
     if(inv.ambitoNome===undefined) inv.ambitoNome='';
     (inv.righe||[]).forEach(r=>{ if(r.ambito===undefined) r.ambito=ambitoDaNome(u, r.nome); });
-    // Vecchio modello: «active:true» con righe committate e nessuna sessione ad-ambito → sessione conclusa.
-    if(inv.active && inv.ambito===null && inv.staging.length===0) inv.active=false;
+    // Vecchio modello con inventario in corso («active:true», righe in lavorazione, senza ambito):
+    // lo si RIAPRE come sessione TOTALE attiva, così l'operatore ritrova la lista con «Concludi».
+    // Le righe restano committate (lo Stock le mostra) e sono copiate in staging per la modifica.
+    if(inv.active && inv.ambito===null && inv.staging.length===0){
+      if((inv.righe||[]).length){ inv.ambito='ALL'; inv.ambitoNome='Tutte le corsie'; inv.staging=staginaDaRighe(inv); }
+      else inv.active=false;
+    }
   }
   // Resiliente: un singolo utente malformato non deve mai bloccare l'avvio (gira fuori dal try di caricaDati).
   function normalizzaTutto(){ Object.keys(DB).forEach(k=>{ try{ normalizzaInv(DB[k]); }catch(e){} }); }
   function oraOra(){ const n=new Date(); return n.getHours()+':'+String(n.getMinutes()).padStart(2,'0'); }
+  // Copia (con id nuovi) delle righe committate, da usare come lista di lavoro modificabile (staging).
+  function staginaDaRighe(inv){ return (inv.righe||[]).map(r=>({ id:nid(), nome:r.nome,
+    quantita:(r.quantita||[]).map(q=>({n:q.n, unita:q.unita})), raw:r.raw, ambito:r.ambito })); }
 
   /* ============ LESSICO UNITÀ (parser quantità) ============ */
   // canonico singolare -> plurale
@@ -1661,6 +1669,14 @@
           inv.staging=[]; inv.active=false; inv.ambito=null; inv.ambitoNome='';
           render(); toast('Inventario annullato'); }} ]);
   }
+  // «Modifica l'ultimo inventario»: riapre il committato come sessione totale attiva (con «Concludi»),
+  // così si può correggere l'ultimo inventario senza ripartire da zero. Concludendo, sovrascrive tutto.
+  function riapriUltimoInventario(){
+    const inv=U().inv;
+    inv.active=true; inv.ambito='ALL'; inv.ambitoNome='Tutte le corsie';
+    inv.staging=staginaDaRighe(inv); inv.iniziata=oraOra();
+    render(); toast('Inventario riaperto per modifica');
+  }
 
   /* ---------- MAGAZZINO (Inventario) ---------- */
   function renderMagazzino(){
@@ -1744,9 +1760,11 @@
       } else {
         screen.insertAdjacentHTML('beforeend','<div class="empty-note" style="padding-top:40px">Nessun inventario ancora registrato per il settore <b>'+esc(u.settore)+'</b>.<br>Avvia una sessione scegliendo l\'ambito (una corsia o tutte).</div>');
       }
-      actionbar.className='actionbar';
-      actionbar.innerHTML='<button class="btn btn-primary" id="mStart">'+IC.plus+'Nuovo inventario</button>';
+      actionbar.className='actionbar'+(righe.length?' col':'');
+      actionbar.innerHTML='<button class="btn btn-primary" id="mStart">'+IC.plus+'Nuovo inventario</button>'+
+        (righe.length?'<button class="btn" id="mResume">'+IC.pencil+'Modifica l\'ultimo inventario</button>':'');
       actionbar.querySelector('#mStart').onclick=()=>startInventoryDialog();
+      if(righe.length) actionbar.querySelector('#mResume').onclick=()=>riapriUltimoInventario();
     }
   }
   function magRow(r){
