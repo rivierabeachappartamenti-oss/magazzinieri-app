@@ -12,7 +12,7 @@
   :root{
     /* Identità dell'app (deliberata, NON segue il tema del viewer) */
     --blu:#1B5BD7; --blu-scuro:#164BAF; --rec:#C21F2E;
-    --ok:#1E7B3C; --incerto:#9A6A00; --mancante:#B3261E;
+    --ok:#1E7B3C; --incerto:#7A5400; --mancante:#B3261E;   /* E1 — ambra scurita: contrasto AA su crema (era #9A6A00 = 4,25:1) */
     --bg:#F6F7F9; --surface:#FFFFFF; --ink:#16181D; --ink2:#5B626F;
     --line:#E4E7EC; --line2:#EDF0F4; --shelfbg:#EEF1F6;
     --ok-bg:#E7F4EC; --incerto-bg:#FBF2DD; --mancante-bg:#FBEAE8; --blu-bg:#EAF0FD;
@@ -207,6 +207,7 @@
   .dict-sim{ display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:650;
     color:var(--incerto); background:var(--incerto-bg); padding:6px 11px; border-radius:999px; margin-bottom:14px; }
   .dict-sim svg{ width:14px; height:14px; }
+  .dict-pick svg{ width:18px; height:18px; flex:0 0 auto; }   /* Fix box gigante: vincola l'icona del selettore scaffale (unica SVG senza classe) */
   .mic-auth{ width:calc(100% - 32px); margin:0 16px 14px; background:var(--blu-bg); border:1.5px solid #CADAF6;
     color:var(--blu-scuro); border-radius:14px; padding:14px 16px; font:inherit; cursor:pointer; text-align:left;
     display:flex; align-items:center; gap:13px; min-height:64px; }
@@ -284,7 +285,7 @@
   .snackbar{ background:#111318; color:#fff; font-size:14px; font-weight:600; padding:10px 10px 10px 16px; border-radius:12px;
     display:flex; align-items:center; gap:14px; box-shadow:0 8px 24px -8px rgba(0,0,0,.5); animation:rise .2s ease; pointer-events:auto; }
   .snackbar button{ background:transparent; border:none; color:#7FB0FF; font:inherit; font-weight:750; font-size:14px;
-    cursor:pointer; padding:8px 10px; border-radius:8px; }
+    cursor:pointer; padding:8px 14px; border-radius:8px; min-height:48px; min-width:48px; display:inline-flex; align-items:center; justify-content:center; }   /* B3/E6 — «Annulla» a portata di dito (≥48px) */
 
   /* ============ PROTO BANNER ============ */
   .proto-banner{ flex:0 0 auto; background:#111318; color:#D6DAE2; font-size:11px; font-weight:600;
@@ -559,6 +560,7 @@
     let max = 99;
     const considera = (id)=>{ const m=/^x(\d+)$/.exec(String(id==null?'':id)); if(m){ const n=+m[1]; if(n>max) max=n; } };
     Object.keys(DB).forEach(k=>{
+      considera(String(k).replace(/^u/,''));   // A3 — conta anche il numero della chiave utente (ux123): senza, al reload il contatore arretra e un nuovo utente può sovrascrivere un profilo esistente
       const u=DB[k]; if(!u || !Array.isArray(u.corsie)) return;
       u.corsie.forEach(c=>{
         considera(c.id);
@@ -623,7 +625,7 @@
     // assegna alla corsia il cui listino contiene la voce più simile (stesse regole dell'aggancio)
     let bestC=AMB_GEN, bestSc=-1;
     (u.corsie||[]).forEach(c=> (c.scaffali||[]).forEach(sc=> (sc.voci||[]).forEach(v=>{
-      const score=matchScore(A, sig(v.nome).split(' ').filter(Boolean));
+      const score=matchScore(A, sig((parseRiga(v.nome).nome)||v.nome).split(' ').filter(Boolean));   // A9 — confronta il nome di sala SENZA formato, come abbinaCorsia (simmetria attribuzione↔aggancio)
       if(score>bestSc){ bestSc=score; bestC=c.id; }
     })));
     return bestSc>=0 ? bestC : AMB_GEN;
@@ -668,6 +670,9 @@
   const UNIT_FORM = {};
   Object.keys(UNITA_PL).forEach(s=>{ UNIT_FORM[s]=s; UNIT_FORM[UNITA_PL[s]]=s; });
   UNIT_FORM['kg']='chilo';
+  // unità di FORMATO (peso/volume): fanno parte del NOME del prodotto, NON sono quantità da contare (decisione committente:
+  // «il formato non deve diventare quantità»). Così «Acqua naturale 1,5 litri» resta un nome intero, e 1L ≠ 2L nell'aggancio.
+  const UNIT_FORMATO = new Set(['grammo','chilo','litro']);
   // unità di genere femminile (per concordanza di «mezzo/mezza»)
   const FEM = new Set(['scatola','cassa','cassetta','confezione','vaschetta','bottiglia',
     'lattina','busta','tanica','pedana','fila','stecca']);
@@ -721,7 +726,7 @@
       else if((N[k]==='un'||N[k]==='uno'||N[k]==='una') && N[k+1]==='quarto'){ n=0.25; k+=2; if(N[k]==='di') k++; }
       else { const v=numVal(N[k]); if(v!=null){ n=v; k++; } }
       if(n==null) return;
-      const canon = UNIT_FORM[N[k]]; if(!canon) return; k++;
+      const canon = UNIT_FORM[N[k]]; if(!canon) return; if(UNIT_FORMATO.has(canon)) return; k++;   // il formato (litri/grammi/chili) non è quantità: resta nel nome
       if(N[k]==='e' && (N[k+1]==='mezzo'||N[k+1]==='mezza')){ n+=0.5; k+=2; }
       if(N[k]!=='di') return; k++;
       const nome = toks.slice(k).join(' ').trim();
@@ -738,6 +743,7 @@
       if(isConn(t)){ i--; continue; }
       const canon=UNIT_FORM[t];
       if(canon){
+        if(UNIT_FORMATO.has(canon)){ if(pendingHalf>0 && !quantita.length){ pendingHalf=0; i=N.length-1; } break; }   // formato (litri/grammi/chili/kg): resta nel nome — con l'eventuale «e mezzo» (niente quantità fantasma «mezzo pezzo»)
         let j=i-1, n=null;
         if(j>=0){
           const lt=N[j];
@@ -753,7 +759,7 @@
       }
       if(t==='mezzo'||t==='mezza'){ pendingHalf+=0.5; consumedAny=true; i--; continue; }
       const v=numVal(t);
-      if(v!=null && !consumedAny){ quantita.unshift({n:v, unita:'pezzo'}); consumedAny=true; i--; break; }
+      if(v!=null && v!==0 && !consumedAny){ quantita.unshift({n:v, unita:'pezzo'}); consumedAny=true; i--; break; }   // A2 — un «zero»/«0» finale isolato (senza unità) è parte del nome (Coca Cola Zero), non una quantità
       break;
     }
     if(pendingHalf>0){
@@ -968,7 +974,8 @@
           self.active=false; self.restart=false; S.recording=false; S.magRecording=false; self.onFail=null; render();
           return;
         }
-        toast(e==='no-speech' ? 'Non ho sentito nulla' : 'Riconoscimento vocale non disponibile');
+        if(e==='no-speech'||e==='aborted') return;   // A4/A11 — errori benigni in ascolto continuo (onend riavvia da sé): niente falso allarme a ogni pausa o stop
+        toast('Riconoscimento vocale non disponibile');
       };
       r.onend=()=>{
         // Android chiude da solo la sessione: se l'utente non ha fermato, riavvia per mantenere l'ascolto continuo.
@@ -1000,13 +1007,15 @@
     const t=document.createElement('div'); t.className='toast'; t.textContent=msg;
     toastRoot.appendChild(t); setTimeout(()=>{ t.remove(); }, 2200);
   }
+  function buzz(ms){ try{ if(navigator.vibrate) navigator.vibrate(ms||18); }catch(e){} }   // B2 — conferma tattile del prodotto registrato (mani occupate, rumore, luce forte)
+  function editingInline(){ const a=document.activeElement; return !!(a && a.classList && a.classList.contains('inline-edit')); }   // B1 — c'è una correzione da tastiera aperta?
   function snackbar(msg, undoLabel, onUndo){
     const s=document.createElement('div'); s.className='snackbar';
     s.innerHTML='<span>'+esc(msg)+'</span>'; const b=document.createElement('button'); b.textContent=undoLabel;
     let done=false;
     b.onclick=()=>{ if(done)return; done=true; s.remove(); onUndo(); };
     s.appendChild(b); toastRoot.appendChild(s);
-    setTimeout(()=>{ if(!done) s.remove(); }, 5000);
+    setTimeout(()=>{ if(!done) s.remove(); }, 7500);   // B3 — finestra di annullamento più lunga (uso a una mano, riflessi)
   }
 
   /* ============ OVERLAY GENERICO ============ */
@@ -1059,7 +1068,13 @@
   }
 
   /* ============ NAV ============ */
-  function go(screenName, opts){ Object.assign(S, opts||{}); S.screen=screenName; S.magRecording=false; render(); }
+  const BACK_PARENT={ corsia:'home', stock:'corsia', dettatura:'corsia', magazzino:'home' };   // B5 — mappa dell'Indietro logico
+  let _navExitArmed=false, _selfBack=false;
+  function go(screenName, opts){
+    Object.assign(S, opts||{}); S.screen=screenName; S.magRecording=false;
+    try{ history.pushState({s:screenName}, ''); }catch(e){}   // B5 — voce di storia per il tasto Indietro di Android
+    render();
+  }
 
   /* ============ RENDER PRINCIPALE ============ */
   let keepSpeech=false;   // se true, un re-render non ferma il riconoscimento in corso
@@ -1264,6 +1279,7 @@
       right:'<button class="iconbtn" id="cMenu" aria-label="Menu corsia">'+IC.kebab+'</button>' });
     topbar.querySelector('#cMenu').onclick=()=>bottomSheet(c.nome, 'Le modifiche restano personali e locali.', [
       {label:'Rinomina corsia', icon:IC.pencil, onClick:()=>renameCorsia(c)},
+      {label:'Elimina corsia', icon:IC.trash, danger:true, onClick:()=>eliminaCorsia(c)},
     ]);
 
     c.scaffali.forEach((sc,si)=> screen.appendChild(shelfBlock(sc, si)) );
@@ -1283,6 +1299,16 @@
     actionbar.querySelector('#aDetta').onclick=()=>go('dettatura',{ dictSid:null });
     actionbar.querySelector('#aStock').onclick=()=>go('stock',{ filter:false });
     actionbar.querySelector('#aNewShelf').onclick=()=>{ addShelf(); };
+  }
+  // F1 — eliminazione di una corsia (conferma forte + annullo): mancava, a differenza di scaffali/voci/utenti.
+  function eliminaCorsia(c){
+    const u=U();
+    modal('<h3>Eliminare la corsia?</h3><p>«'+esc(c.nome)+'» e tutti i suoi scaffali e prodotti verranno eliminati da questo dispositivo. L\'inventario di magazzino non viene toccato. Puoi annullare subito dopo.</p>',
+      [ {label:'Annulla'}, {label:'Elimina', cls:'danger', onClick:()=>{
+          const i=u.corsie.indexOf(c); if(i<0) return;
+          u.corsie.splice(i,1); salvaDati(); go('home',{homeTab:'sala'});
+          snackbar('Corsia «'+c.nome+'» eliminata','Annulla',()=>{ u.corsie.splice(Math.min(i,u.corsie.length),0,c); salvaDati(); render(); });
+      }} ], true);
   }
 
   // Requisito 2 — ogni scaffale è una <section> a posizionamento relativo:
@@ -1451,6 +1477,7 @@
       // da intestazione del blocco (sostituisce il vecchio titolo statico, che ripeteva solo il nome).
       const pick=document.createElement('button'); pick.type='button';
       pick.setAttribute('aria-label','Cambia lo scaffale in cui stai dettando');
+      pick.className='dict-pick';   // Fix box gigante: la sua icona IC.box era l'unica SVG senza classe -> si dilatava a dimensione intrinseca
       pick.style.cssText='display:flex;align-items:center;gap:8px;width:100%;background:var(--blu-bg);'+
         'border:1px solid rgba(27,91,215,.25);border-radius:12px;padding:11px 12px;margin:2px 0 10px;'+
         'font-family:inherit;font-size:14px;color:var(--blu);font-weight:700;cursor:pointer;text-align:left';
@@ -1560,19 +1587,9 @@
     // P4 — c'era un «nuovo scaffale» in attesa di conferma ma l'operatore detta altro: la richiesta si
     // annulla (nessuno scaffale) e la frase viene trattata come un normale prodotto.
     if(pendingShelf) cancelPendingShelf();
-    // R4 — le quantità appartengono all'inventario di magazzino: in sala si salva solo il nome
-    const p=parseRiga(txt);
-    if(p.quantita.length>0){
-      if(!p.nome || !p.nome.trim()){
-        toast('Qui si detta il nome del prodotto; le quantità vanno in Magazzino');
-        return;
-      }
-      commitVoce(cap(p.nome));
-      if(!salaQtyAvvisato){ salaQtyAvvisato=true;
-        toast('Le quantità si dettano in Magazzino: qui ho salvato solo il nome'); }
-      return;
-    }
-    commitVoce(cap(txt));
+    // A9 — in sala il nome del prodotto si salva PER INTERO, formati compresi («Acqua naturale 1,5 litri»,
+    // «Coca Cola Zero»): le quantità non si contano in sala, quindi nulla viene staccato dal nome (decisione del committente).
+    commitVoce(cap(txt.replace(/[.?!…]+$/,'').trim()));
   }
   // Rev.#1 — cancelPendingShelf() PRIMA di Speech.stop(): lo stop fa un flush sincrono che, con una richiesta
   // «nuovo scaffale» in sospeso e un nome ancora nel buffer, la confermerebbe creando uno scaffale indesiderato.
@@ -1601,12 +1618,16 @@
     // vecchio (inclusa uguaglianza), si sostituisce in-place tenendo la versione più lunga (più
     // informativa), senza aggiungere una nuova riga.
     const older=norm(last?last.nome:''), newer=nt;
-    const dup = last && older && newer &&
+    const dup = last && !editingInline() && older && newer &&   // B1 — mentre si corregge una riga da tastiera, non fondere nella precedente: la voce dettata resta a sé (niente frammento perso)
                 (newer.indexOf(older)===0 || older.indexOf(newer)===0) &&
                 (Date.now()-tsCommitSala) < FINESTRA_DOPPIONE_MS;
     if(dup){ if(newer.length>=older.length) last.nome=text; targetId=last.id; }
     else { const v={id:nid(), nome:text}; sc.voci.push(v); targetId=v.id; }
     tsCommitSala=Date.now();
+    buzz();   // B2 — conferma tattile in sala
+    // B1 — se si sta correggendo una voce da tastiera, NON ricostruire il DOM (distruggerebbe l'input a fuoco):
+    // la voce dettata è già nel modello e comparirà alla chiusura dell'edit. Salva subito, niente re-render.
+    if(editingInline()){ salvaDati(); return; }
     // re-render dettatura mantenendo stato
     renderDettaturaKeep();
     // BUG2/2b — dopo la ricostruzione ancora la vista al fondo (le nuove righe sono sempre in fondo,
@@ -1717,6 +1738,26 @@
     });
     return map;
   }
+  // DIVIDE PER SALA — le righe di magazzino di UNA corsia sono SOLO quelle dettate per lei (ambito === corsia): ogni
+  // magazzino mostra esattamente ciò che è stato dettato lì, niente di più (decisione committente). Righe di altre
+  // corsie non entrano; se lo stesso prodotto è dettato in due corsie, compare in entrambe con la propria quantità.
+  function righeCorsia(inv, c){ return (inv.righe||[]).filter(r=> r.ambito===c.id); }
+  // A5 — dopo la sovrascrittura dell'inventario le righe ricevono nuovi id: trasferisce gli agganci manuali
+  // (linkId) dal vecchio id al nuovo per FIRMA del nome, così un aggancio fatto a mano sopravvive alla conta
+  // successiva (es. Mozzarella↔Mozarella). Se il prodotto non è più nel nuovo inventario, purgeLinkOrfani lo toglie.
+  function remapLinkManuali(oldRighe, newRighe){
+    const oldById=new Map((oldRighe||[]).map(r=>[r.id,r]));
+    const newBySig=new Map(); (newRighe||[]).forEach(r=>{ const k=sig(r.nome); if(!k) return; if(!newBySig.has(k)) newBySig.set(k, []); newBySig.get(k).push(r); });
+    (U().corsie||[]).forEach(c=> (c.scaffali||[]).forEach(sc=> (sc.voci||[]).forEach(v=>{
+      if(!v.linkId) return;
+      const oldR=oldById.get(v.linkId); if(!oldR) return;   // già verso una riga corrente/ignota: lascia decidere purge
+      const cand=newBySig.get(sig(oldR.nome)); if(!cand||!cand.length) return;
+      // #4 — con più righe omonime in ambiti diversi (tolto il dedup cross-corsia), scegli quella della corsia della
+      // voce, poi quella dell'ambito precedente, poi la prima: l'aggancio manuale resta sul magazzino giusto.
+      const pick=cand.find(r=>r.ambito===c.id) || cand.find(r=>r.ambito===oldR.ambito) || cand[0];
+      v.linkId=pick.id;
+    })));
+  }
   // BUG3 — ripulisce gli agganci fantasma: rimuove da ogni voce di sala il linkId che non punta più
   // a una riga di magazzino esistente (riga eliminata). Così il riscontro non conserva MAI un
   // riferimento a righe non più presenti in inv.righe. Da chiamare prima di ricalcolare lo Stock.
@@ -1737,8 +1778,8 @@
     // 1) agganci manuali: priorità assoluta, bloccano il prodotto
     voci.forEach(v=>{
       if(!v.linkId) return;
-      const r=(inv.righe||[]).find(x=>x.id===v.linkId);
-      if(!r){ delete v.linkId; return; }   // BUG3 — linkId orfano: si azzera e si passa al match per nome
+      const r=(U().inv.righe||[]).find(x=>x.id===v.linkId);   // #1 — l'aggancio MANUALE si risolve sull'inventario INTERO (non lo scoped invC): un link esplicito vale anche se la riga è non attribuita (AMB_GEN) o di un'altra corsia. Solo l'auto-match per nome resta scoped.
+      if(!r){ return; }   // niente delete (abbinaCorsia resta PURA): la pulizia dei veri orfani è di purgeLinkOrfani (sull'inv intero).
       const k=sig(r.nome);
       if(k && takenKey.has(k)) return;      // prodotto già agganciato (a mano) a un'altra voce: uno-a-uno
       const grp=map[k];
@@ -1748,8 +1789,11 @@
     // 2) candidati per nome (esatto=1, refuso no-àncora≈0.9, omissione riempitivi=0.97), assegnazione uno-a-uno per punteggio decrescente
     const keys=Object.keys(map), pairs=[];
     voci.forEach(v=>{
-      if(match.has(v)) return;
-      const vs=sig(v.nome); if(!vs) return;
+      if(match.has(v) || v.noMatch) return;   // A10 — «nessun riscontro» forzato a mano: non abbinare automaticamente
+      // A9 — l'aggancio confronta il nome di sala ripulito da parseRiga: il FORMATO resta (litri/grammi/chili, ora
+      // tenuto anche in magazzino → i due lati sono simmetrici e «1 litro»≠«2 litri»), mentre eventuali quantità
+      // d'imballo dettate per errore nel nome di sala vengono tolte dal confronto. Il display della voce resta intero.
+      const vs=sig((parseRiga(v.nome).nome)||v.nome); if(!vs) return;
       const A=vs.split(' ').filter(Boolean);
       keys.forEach(k=>{ const s=(k===vs)?1:matchScore(A, k.split(' ')); if(s>=0) pairs.push({v,k,s}); });
     });
@@ -1768,12 +1812,15 @@
   function renderStock(){
     const c=corsia(); const inv=U().inv;
     purgeLinkOrfani(inv);              // BUG3 — nessun aggancio fantasma sopravvive: si ricalcola sempre dal vivo
-    const map=buildInvMap(inv);
+    // DIVISO PER SALA: lo Stock considera SOLO il magazzino di QUESTA corsia (ambito === corsia); le righe di altre
+    // corsie e quelle non attribuite non compaiono qui (l'aggancio a mano può però attingere anche alle non attribuite).
+    const invC={ righe:righeCorsia(inv, c) };
+    const map=buildInvMap(invC);
     // aggancio UNO-A-UNO: nessun prodotto di magazzino finisce su due voci di sala
-    const {match, usedRighe}=abbinaCorsia(c, inv, map);
+    const {match, usedRighe}=abbinaCorsia(c, invC, map);
     let agganci=0, senza=0;
     c.scaffali.forEach(sc=> sc.voci.forEach(v=>{ if(match.has(v)) agganci++; else senza++; }));
-    const hasData=(inv.righe||[]).length>0;
+    const hasData=invC.righe.length>0;
 
     setTopbar({ back:true, onBack:()=>go('corsia'),
       titleHTML:'<div class="tb-title">'+esc(c.nome)+'</div>',
@@ -1815,8 +1862,8 @@
       screen.appendChild(sec);
     });
 
-    // Sezione finale: righe di magazzino che non agganciano alcuna voce di sala
-    const soli=(inv.righe||[]).filter(r=>!usedRighe.has(r.id));
+    // Sezione finale: righe di magazzino (di QUESTA corsia) che non agganciano alcuna voce di sala
+    const soli=invC.righe.filter(r=>!usedRighe.has(r.id));
     if(soli.length && !S.filter){
       screen.insertAdjacentHTML('beforeend','<div class="section-h">Solo in magazzino · non nel listino</div>');
       soli.forEach(r=>{
@@ -1846,14 +1893,38 @@
     } else {
       row.insertAdjacentHTML('beforeend','<span class="stockbadge has">'+IC.box+esc(fmtQuantita(m.quantita)||'presente')+'</span>');
     }
+    // A10 — menu per correggere il riscontro a mano (scollega / cambia / ripristina automatico)
+    if((U().inv.righe||[]).length){
+      const kb=document.createElement('button'); kb.className='rowbtn'; kb.innerHTML=IC.kebab; kb.setAttribute('aria-label','Correggi il riscontro');
+      kb.onclick=()=>riscontroMenu(v); row.appendChild(kb);
+    }
     return row;
+  }
+  // A10 — correzione manuale del riscontro di una voce di sala
+  function riscontroMenu(v){
+    const items=[];
+    if(v.noMatch){
+      items.push({label:'Ripristina riscontro automatico', icon:IC.check, onClick:()=>{ delete v.noMatch; render(); }});
+    } else {
+      items.push({label:'Cambia riscontro…', icon:IC.box, onClick:()=>riscontroPicker(v)});
+      items.push({label:'Nessun riscontro (scollega)', icon:IC.trash, danger:true, onClick:()=>{ delete v.linkId; v.noMatch=true; render(); toast('«'+v.nome+'»: nessun riscontro dal magazzino'); }});
+    }
+    bottomSheet('Riscontro di «'+v.nome+'»', 'Correggi a mano l\'abbinamento con il magazzino.', items);
+  }
+  function riscontroPicker(v){
+    const c=corsia();
+    const righe=(U().inv.righe||[]).filter(r=> r.ambito===c.id || r.ambito===AMB_GEN);   // #3 — per l'aggancio a mano offri il magazzino di questa corsia PIÙ le righe non attribuite (da conta totale): agganciandole le attribuisci a questa corsia
+    if(!righe.length){ toast('Nessuna riga di magazzino da agganciare'); return; }
+    const items=righe.map(r=>{ const q=fmtQuantita(r.quantita); return { label:r.nome+(q?'  ('+q+')':''), icon:IC.box,
+      onClick:()=>{ v.linkId=r.id; r.ambito=c.id; delete v.noMatch; salvaDati(); render(); toast('«'+v.nome+'» agganciato a '+r.nome); } }; });
+    bottomSheet('Aggancia «'+v.nome+'» a…', 'Scegli la riga di magazzino (di questa corsia o non ancora attribuita).', items);
   }
   // «Assegna»: aggancio manuale voce→riga (imposta v.linkId, senza rinominare)
   function assignSheet(c, riga){
     const items=[];
     c.scaffali.forEach(sc=> sc.voci.forEach(v=> items.push({
       label:v.nome+'  ('+sc.titolo+')',
-      onClick:()=>{ v.linkId=riga.id; render(); toast('«'+riga.nome+'» agganciato a '+v.nome); }
+      onClick:()=>{ delete v.noMatch; v.linkId=riga.id; riga.ambito=c.id; salvaDati(); render(); toast('«'+riga.nome+'» agganciato a '+v.nome); }   // A10 + divide-per-sala: annulla «nessun riscontro» e ATTRIBUISCE la riga a questa corsia
     })));
     bottomSheet('Assegna «'+riga.nome+'»', 'Scegli la voce di sala a cui agganciare questa riga di magazzino (senza rinominarla).', items);
   }
@@ -1938,7 +2009,7 @@
       // Promemoria d'ambito nella modalità settoriale: si detta SOLO ciò che appartiene alla corsia.
       if(inv.ambito!=='ALL'){
         wrap.insertAdjacentHTML('beforeend','<div class="dict-info">Detta solo le voci di <b>'+esc(inv.ambitoNome)+
-          '</b>. Alla conclusione verrà sovrascritta soltanto questa corsia; le altre restano intatte.</div>');
+          '</b>. Alla conclusione viene sovrascritta questa corsia; lo stesso prodotto eventualmente contato in un\'altra corsia viene ricondotto qui, per non contarlo due volte.</div>');
       }
       inv.staging.forEach(r=> wrap.appendChild(magRow(r)) );
       // R3 — riga provvisoria: mostra in diretta ciò che il motore sta scrivendo (solo durante l'ascolto)
@@ -1946,7 +2017,7 @@
       mprov.innerHTML='<div class="voce-name provisional" id="magProvText"></div>';
       wrap.appendChild(mprov);
       const add=document.createElement('button'); add.className='addbtn'; add.innerHTML=IC.plus+'Aggiungi voce';
-      add.onclick=()=>{ const nr={id:nid(), nome:'Nuova voce', quantita:[], raw:'Nuova voce'}; inv.staging.push(nr); render();
+      add.onclick=()=>{ const nr={id:nid(), nome:'Nuova voce', quantita:[], raw:'Nuova voce'}; inv.staging.push(nr); S.magRecording=false; render();   // A1 — «Aggiungi voce» ferma la dettatura viva (render nudo): allinea il flag così la UI non resta «In ascolto» col microfono fermo
         const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.rid===nr.id);
         if(el) editMagRow(el, nr); };
       wrap.appendChild(add);
@@ -2048,6 +2119,8 @@
   function hideMagProv(){ const r=document.getElementById('magProvRow'); if(r){ r.style.display='none'; } }
   // R3 — re-render leggero (Speech attivo) + flash e scorrimento sulla riga interessata
   function flashMagRow(id){
+    buzz();   // B2 — conferma tattile in magazzino
+    if(editingInline()){ salvaDati(); return; }   // B1 — non ricostruire il DOM mentre si corregge da tastiera (la voce è già nello staging)
     keepSpeech=true; render(); keepSpeech=false;
     // BUG2/2b — dopo la ricostruzione ancora la vista al fondo, poi scorrimento istantaneo sulla riga.
     try{ screen.scrollTop=screen.scrollHeight; }catch(e){}
@@ -2102,25 +2175,36 @@
     flashMagRow(nr.id);
   }
   // Conclusione: applica la sovrascrittura secondo l'ambito, poi il resoconto sull'ambito.
-  function closeInventory(){
+  function closeInventory(forceEmpty){
     const u=U(); const inv=u.inv;
     if(!inv.active){ return; }
-    if(!inv.staging.length){ toast('Aggiungi almeno una voce'); return; }
+    // A8 — se si sta ancora dettando, ferma il motore e SVUOTA il buffer di frase (flushFrase è sincrona):
+    // l'ultima frase entra nello staging PRIMA che venga letto, così concludere in fretta non la perde.
+    if(S.magRecording){ S.magRecording=false; Speech.stop(); }
+    if(!inv.staging.length && forceEmpty!==true){
+      // A7 — concludere senza voci SVUOTA l'ambito: una corsia davvero svuotata va potuta registrare, con conferma esplicita
+      const cosa = (inv.ambito==='ALL') ? 'Tutte le corsie risulteranno senza giacenze' : 'La corsia «'+(inv.ambitoNome||'')+'» risulterà senza giacenze';
+      modal('<h3>Concludere senza aver dettato voci?</h3><p>'+cosa+', e l\'inventario precedente di questo ambito verrà svuotato. Procedere?</p>',
+        [ {label:'Annulla'}, {label:'Sì, svuota', cls:'danger', onClick:()=>closeInventory(true)} ], true);
+      return;
+    }
     const totale = (inv.ambito==='ALL');
     const scopeId = inv.ambito, scopeNome = inv.ambitoNome;
+    const oldRighe = (inv.righe||[]).slice();   // A5 — snapshot per ri-mappare gli agganci manuali sui nuovi id
     // 1) ogni riga dettata riceve il proprio ambito: la corsia scelta (settoriale) o per nome (totale)
     inv.staging.forEach(r=>{ r.ambito = totale ? ambitoDaNome(u, r.nome) : scopeId; });
     // 2) sovrascrittura (§1.8.14–15). Totale: azzera tutto e riparte dalle sole righe dettate.
-    //    Settoriale: rimpiazza TUTTE le righe di quella corsia (sovrascrittura totale del settore) più
-    //    eventuali omonime di altri ambiti, così lo stesso prodotto non resta duplicato nel magazzino.
+    //    Settoriale: rimpiazza SOLO le righe di questa corsia (ambito === scopeId) e LASCIA INTATTE quelle delle altre
+    //    corsie, anche se omonime — ogni magazzino tiene ciò che è stato dettato per lui (decisione committente). Il
+    //    vecchio dedup cross-corsia (v1.6.20) serviva a evitare la somma nel confronto, ora già impedita dallo scoping.
     if(totale){
       inv.righe = inv.staging.slice();
     } else {
-      const nomiNuovi = new Set(inv.staging.map(r=>sig(r.nome)));   // firma (ordine indifferente), coerente con l'aggancio
-      inv.righe = (inv.righe||[]).filter(r=> r.ambito!==scopeId && !nomiNuovi.has(sig(r.nome))).concat(inv.staging);
+      inv.righe = (inv.righe||[]).filter(r=> r.ambito!==scopeId).concat(inv.staging);
     }
     inv.staging=[]; inv.active=false; inv.ambito=null; inv.ambitoNome='';
     inv.prevData='oggi'; inv.prevCount=inv.righe.length;
+    remapLinkManuali(oldRighe, inv.righe);   // A5 — trasferisce gli agganci manuali dai vecchi id ai nuovi (per firma) PRIMA di ripulire gli orfani
     purgeLinkOrfani(inv);   // BUG3 — nessun aggancio fantasma sopravvive alla sovrascrittura
     // FUNZIONE C — utente senza corsie: chiusura con riepilogo essenziale, senza toccare corsie[0].
     if(!u.corsie.length){
@@ -2141,16 +2225,17 @@
     //    agganci: nel totale evita di atterrare su una corsia estranea al dettato (che mostrerebbe
     //    «0 agganciate» pur avendo il resoconto contato gli agganci nelle altre); nel settoriale
     //    coincide comunque con la corsia dell'ambito (unica in esame).
-    const map=buildInvMap(inv); let agg=0, senza=0; const used=new Set();
+    let agg=0, senza=0; const used=new Set();
     let bestC=null, bestAgg=-1;
     corsieAmbito.forEach(c=>{
-      const {match, usedRighe}=abbinaCorsia(c, inv, map);   // uno-a-uno anche nel resoconto
+      const invC={ righe:righeCorsia(inv, c) };   // DIVISO PER SALA: ogni corsia conta solo il proprio magazzino (coerente con lo Stock)
+      const {match, usedRighe}=abbinaCorsia(c, invC, buildInvMap(invC));   // uno-a-uno anche nel resoconto
       let cAgg=0;
       c.scaffali.forEach(sc=> sc.voci.forEach(v=>{ if(match.has(v)){ agg++; cAgg++; } else senza++; }));
       usedRighe.forEach(id=>used.add(id));
       if(cAgg>bestAgg){ bestAgg=cAgg; bestC=c; }
     });
-    const righeAmbito = totale ? inv.righe : inv.righe.filter(r=>r.ambito===scopeId);
+    const righeAmbito = totale ? inv.righe : righeCorsia(inv, {id:scopeId});   // conteggio coerente con lo Stock (settoriale: solo le righe di questa corsia; totale: tutte le righe dell'inventario)
     const soli = righeAmbito.filter(r=>!used.has(r.id)).length;
     const dest = (bestC || u.corsie[0]).id;
     modal('<h3>Inventario concluso</h3><p>Ambito: <b>'+esc(scopeNome)+'</b> · <b>'+righeAmbito.length+'</b> voci di magazzino.<br>'+
@@ -2169,8 +2254,37 @@
   caricaDati();   // ripristina l'eventuale lavoro salvato PRIMA del primo render (mai la navigazione)
   // Flush immediato quando l'app passa in background o viene chiusa: è ciò che salva
   // se l'operatore chiude l'app dal task switcher senza tornare al render.
-  try{ document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flushSalva(); }); }catch(e){}
+  let _stoppedOnHide=false;   // F2 — memorizza se andando in background abbiamo dovuto fermare la dettatura
+  try{ document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden){
+      // F2 — in background/blocco schermo Android termina la sessione vocale: fermiamo noi il motore (l'ultima
+      // frase viene emessa) e spegniamo i flag, poi salviamo; così al ritorno non resta «In ascolto» col microfono morto.
+      if(S.recording||S.magRecording){ try{ Speech.stop(); }catch(e){} S.recording=false; S.magRecording=false; _stoppedOnHide=true; }
+      flushSalva();
+    } else if(_stoppedOnHide){
+      _stoppedOnHide=false;
+      // solo se avevamo davvero fermato la dettatura: riallinea la UI allo stato reale (non in ascolto),
+      // conservando la posizione di scorrimento (renderKeepScroll) — niente salto in cima nel caso innocente
+      if(S.screen==='dettatura'||S.screen==='magazzino') renderKeepScroll();
+    }
+  }); }catch(e){}
   try{ window.addEventListener('pagehide', ()=>{ flushSalva(); }); }catch(e){}
+  // B5 — tasto/gesto Indietro di Android: risale di una schermata nell'app (o chiude una tendina) invece di uscire.
+  try{ history.replaceState({s:S.screen||'login'}, ''); }catch(e){}
+  window.addEventListener('popstate', function(){
+    if(_selfBack){ _selfBack=false; return; }   // B5 — popstate generata dal nostro history.back() d'uscita: lasciala passare, niente ri-arma (evita l'intrappolamento nel loop del toast)
+    const ov=app.querySelector('.ov');
+    if(ov){ ov.remove(); try{ history.pushState({s:S.screen}, ''); }catch(e){} return; }   // tendina/modale aperta: l'Indietro la chiude e basta
+    const parent=BACK_PARENT[S.screen];
+    if(parent){
+      S.screen=parent; S.magRecording=false; render();
+      try{ history.pushState({s:parent}, ''); }catch(e){}
+      _navExitArmed=false;
+    } else {
+      if(_navExitArmed){ _navExitArmed=false; _selfBack=true; history.back(); }   // secondo Indietro alla radice: esci davvero, senza re-intercettare
+      else { _navExitArmed=true; toast('Premi ancora Indietro per uscire'); try{ history.pushState({s:S.screen}, ''); }catch(e){} setTimeout(function(){ _navExitArmed=false; }, 2500); }
+    }
+  });
   render();
 })();
 </script>
@@ -2193,6 +2307,8 @@ if('serviceWorker' in navigator){
   var deferred=null, bar=null;
   var URL_APP='https://rivierabeachappartamenti-oss.github.io/magazzinieri-app/';
   var STANDALONE = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true;
+  function setAppPad(px){ var a=document.getElementById('app'); if(a) a.style.paddingBottom = px ? (px+'px') : ''; }   // D1 — spazio sotto l'app quando la barra install è visibile, così non copre i pulsanti in basso
+  function chiudiBar(){ if(bar){ bar.remove(); bar=null; } setAppPad(0); }
 
   function baseBar(){
     var el=document.createElement('div');
@@ -2212,7 +2328,7 @@ if('serviceWorker' in navigator){
     var x=document.createElement('button');
     x.textContent='×'; x.setAttribute('aria-label','Chiudi');
     x.style.cssText='border:none;background:transparent;color:#fff;font-size:22px;line-height:1;cursor:pointer;padding:8px;min-height:48px;font-family:inherit;';
-    x.onclick=function(){ if(bar){ bar.remove(); bar=null; } };
+    x.onclick=function(){ chiudiBar(); };
     return x;
   }
   function mostraInstalla(){
@@ -2223,10 +2339,11 @@ if('serviceWorker' in navigator){
     b.onclick=function(){
       if(!deferred) return;
       deferred.prompt();
-      deferred.userChoice.then(function(){ deferred=null; if(bar){ bar.remove(); bar=null; } });
+      deferred.userChoice.then(function(){ deferred=null; chiudiBar(); });
     };
     bar.appendChild(b); bar.appendChild(chiusura());
     document.body.appendChild(bar);
+    setAppPad(bar.getBoundingClientRect().height + 24);   // D1
   }
   function mostraApriInChrome(){
     if(bar || STANDALONE) return;
@@ -2249,11 +2366,12 @@ if('serviceWorker' in navigator){
     }
     bar.appendChild(chiusura());
     document.body.appendChild(bar);
+    setAppPad(bar.getBoundingClientRect().height + 24);   // D1
   }
   window.addEventListener('beforeinstallprompt', function(e){
     e.preventDefault(); deferred=e; mostraInstalla();
   });
-  window.addEventListener('appinstalled', function(){ deferred=null; if(bar){ bar.remove(); bar=null; } });
+  window.addEventListener('appinstalled', function(){ deferred=null; chiudiBar(); });
   /* Se dopo 3 secondi nessuna proposta di installazione è arrivata (browser interno di un'app,
      oppure browser non compatibile), guida l'utente ad aprire in Chrome. */
   window.addEventListener('load', function(){
