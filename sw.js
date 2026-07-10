@@ -6,7 +6,14 @@ const CACHE = 'magazzinieri-proto-v2';
 const FILES = ['./index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // E-R1: install non-atomica: ogni file in cache separatamente; un 404 su asset non critico non azzera l'offline
+  e.waitUntil(
+    caches.open(CACHE).then(async (c) => {
+      for(const f of FILES){
+        try{ await c.add(f); }catch(e){ /* non fatale: l'asset mancante non blocca il resto */ }
+      }
+    }).then(() => self.skipWaiting())
+  );
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(

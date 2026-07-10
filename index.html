@@ -99,14 +99,15 @@
     display:grid; place-items:center; font-weight:750; font-size:20px; }
   .usercard .un{ font-size:19px; font-weight:700; }
   .usercard .us{ font-size:13.5px; color:var(--ink2); margin-top:1px; }
-  .usercard .chev{ margin-left:auto; color:var(--ink2); }
+  .usercard .chev{ color:var(--ink2); }
+  .usercard .chev svg{width:20px;height:20px}
   .list-gap{ display:flex; flex-direction:column; gap:12px; }
 
   /* ============ HOME ============ */
   .seg{ display:flex; background:var(--line2); border-radius:14px; padding:4px; gap:4px; }
   .seg-btn{
     flex:1; border:none; background:transparent; font:inherit; font-weight:650; font-size:14.5px;
-    color:var(--ink2); padding:12px 8px; border-radius:10px; cursor:pointer; min-height:48px;
+    color:var(--ink2); padding:12px 8px; border-radius:10px; cursor:pointer; min-height:56px;
   }
   .seg-btn[aria-selected="true"]{ background:var(--surface); color:var(--ink);
     box-shadow:0 1px 3px rgba(16,24,40,.12); font-weight:720; }
@@ -119,7 +120,8 @@
   .cc-top{ display:flex; align-items:center; gap:10px; }
   .cc-name{ font-size:18px; font-weight:730; letter-spacing:-.01em; }
   .cc-meta{ font-size:13px; color:var(--ink2); margin-top:2px; }
-  .cc-chev{ margin-left:auto; color:var(--ink2); }
+  .cc-chev{ margin-left:auto; color:var(--ink2); }   /* collaudo v1.6.29: allineamento a destra ripristinato (qui non c'è un secondo margin auto in conflitto) */
+  .cc-chev svg{width:20px;height:20px}
   .pill{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:650;
     padding:5px 10px; border-radius:999px; }
   .pill svg{ width:14px; height:14px; }
@@ -165,8 +167,8 @@
   .newshelf svg{ width:20px; height:20px; flex:0 0 auto; }
   .newshelf:hover{ background:var(--blu-bg); border-color:var(--blu); }
   .inline-edit{
-    flex:1; font:inherit; font-size:16.5px; padding:9px 10px; border:2px solid var(--blu);
-    border-radius:9px; outline:none; background:#fff; color:var(--ink); min-width:0;
+    width:100%; font:inherit; font-size:16.5px; padding:9px 10px; border:2px solid var(--blu);
+    border-radius:9px; outline:none; background:#fff; color:var(--ink); min-width:0; display:block;
   }
 
   /* ============ STOCK OVERLAY ============ */
@@ -179,10 +181,6 @@
   .stockbadge.has{ background:var(--ok-bg); color:var(--ok); }
   .stockbadge.zero{ background:var(--mancante-bg); color:var(--mancante); }
   .stockbadge.nodata{ background:var(--line2); color:var(--ink2); }
-  .approx-btn{ flex:0 0 auto; border:1px solid #E3CE93; background:var(--incerto-bg); color:var(--incerto);
-    font:inherit; font-weight:750; font-size:14px; border-radius:10px; padding:6px 9px; cursor:pointer;
-    display:inline-flex; align-items:center; gap:4px; min-height:56px; }
-  .approx-btn:hover{ background:#F6E9C6; }
   .miss-dot{ width:9px; height:9px; border-radius:50%; background:var(--mancante); flex:0 0 auto; }
   .section-h{ padding:16px 16px 8px; font-size:12.5px; font-weight:750; letter-spacing:.05em;
     text-transform:uppercase; color:var(--ink2); }
@@ -293,7 +291,7 @@
     align-items:center; justify-content:center; gap:7px; }
   .proto-banner svg{ width:13px; height:13px; flex:0 0 auto; opacity:.85; }
 
-  :focus-visible{ outline:3px solid #7FB0FF; outline-offset:2px; border-radius:8px; }
+  :focus-visible{ outline:3px solid #0D47A1; outline-offset:2px; border-radius:8px; }
   @media (prefers-reduced-motion:reduce){
     *{ animation:none !important; transition:none !important; }
   }
@@ -313,7 +311,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
         Prototipo dimostrativo — dati di esempio
       </div>
-      <div class="toast-root" id="toastRoot"></div>
+      <div class="toast-root" id="toastRoot" role="status" aria-live="polite" aria-atomic="true"></div>  <!-- G-E3 -->
     </div>
   </div>
 </div>
@@ -321,6 +319,8 @@
 <script>
 "use strict";
 (function(){
+  /* v1.6.28-fix — gemelli core identici post-mandato docs/16 (22 + N-1 tessera) 2026-07-09 */
+  /* core synced 2026-07-09 per mandate §2.1 (MD5 match at delivery) */
   /* ============ ICONE (SVG inline, currentColor) ============ */
   const S2='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
   const IC = {
@@ -336,10 +336,9 @@
     up:    S2+'<path d="M6 15l6-6 6 6"/></svg>',
     down:  S2+'<path d="M6 9l6 6 6-6"/></svg>',
     clock: S2+'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
-    wave:  S2+'<path d="M4 12h2M8 8v8M12 5v14M16 8v8M20 12h0"/></svg>',
     info:  S2+'<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>',
     logout:S2+'<path d="M15 4h4v16h-4M11 8l-4 4 4 4M7 12h9"/></svg>'
-  };
+  };  // G-F8: wave rimosso (dead code, non referenziato)
 
   /* ============ DATI DI ESEMPIO (02-modello-dati) ============ */
   // Isolamento: ogni utente possiede solo le PROPRIE corsie e denominazioni.
@@ -376,7 +375,7 @@
           ], daAssegnare:[]
         },
       ],
-      inv:{ active:true, settore:'Frighi', iniziata:'10:15', prevData:'2 lug', prevCount:47,
+      inv:{ active:true, settore:'Frighi', iniziata:'10:15', 
         righe:[
           {id:'r1', nome:'Yogurt greco 500g', quantita:[{n:8,unita:'vaschetta'}], raw:'Yogurt greco 500g 8 vaschette'},
           {id:'r2', nome:'Latte intero 1L x6', quantita:[{n:2,unita:'cartone'}], raw:'Latte intero 1L x6 2 cartoni'},
@@ -435,7 +434,7 @@
   const scaffOf = (sid)=> corsia().scaffali.find(s=>s.id===sid);
   const esc = (s)=> String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // normalizzazione per confronto nomi/token: minuscolo, senza accenti, spazi compattati
-  const norm = (s)=> String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
+  const norm = (s)=> String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
   const cap = (s)=>{ s=String(s==null?'':s).trim(); return s? s.charAt(0).toUpperCase()+s.slice(1) : s; };
 
   /* ---- Confronto nomi per l'aggancio listino↔magazzino (scelte del committente) ----
@@ -443,52 +442,45 @@
      1) ordine delle parole indifferente: «Coca Cola 1L» = «1L Coca Cola» (firma con parole ordinate);
      2) parole-riempitivo ignorabili: «san benedetto matcha the verde» = «san benedetto matcha verde»
         (forti = articoli/preposizioni non ambigue; deboli the/te/gusto/succo solo come OMISSIONE, mai sostituzione);
-     3) refuso di UNA lettera per parola, regola «NO-ÀNCORA»: accettato solo quando TUTTE le parole cambiano
-        («mogu mogu»=«mogo mogo»), MAI quando una parola resta identica e cambia solo l'altra («mela rossa»≠«mela
-        rosa», «sale grosso»≠«sale rosso», «pepsi lattina»≠«peppsi lattina» → questi si collegano a mano).
-     Restano NON agganciati: «pesca»≠«pera», 1L≠2L, refusi su una sola parola. Priorità: evitare i FALSI POSITIVI. */
+     3) refuso di UNA lettera per parola = SOLO la SOSTITUZIONE di una lettera a PARITÀ DI LUNGHEZZA (stessa
+        lunghezza, una posizione diversa, distanza di Hamming = 1): «sottilette»=«sottiletta», «mela rossa»=«mela
+        russa», anche su nomi di UNA sola parola. Un cambio di LUNGHEZZA (una lettera in più o in meno) NON è
+        refuso ma prodotto diverso: «mela rossa»≠«mela rosa» (rossa 5/rosa 4), «cola»≠«colla», «mozzarella»≠«mozarella».
+     Restano NON agganciati: «pesca»≠«pera» e ogni cambio di lunghezza, 1L≠2L, ≥2 lettere diverse. Priorità: evitare i FALSI POSITIVI. */
   // firma: minuscolo/senza accenti (norm), decimali marcati (1,5 = 1.5, ma ≠ 15!), punteggiatura→spazio
   // (Coca-Cola = Coca Cola, S.Pellegrino = S Pellegrino), parole ORDINATE (ordine indifferente).
   // P3 — il separatore decimale diventa «dec» (1,5 → 1dec5) così «1,5 L» NON coincide più con «15 L».
   // P3 — «the» (grafia ASR di «tè») è unificato a «te»: così «matcha the verde» = «matcha tè verde» (stessa parola),
   // mentre resta distinto da «succo» (v. riempitivi deboli: the/succo è sostituzione, non omissione).
   function sig(nome){ return norm(nome).replace(/(\d)[.,](\d)/g,'$1dec$2').replace(/[^a-z0-9\s]+/g,' ').replace(/\bthe\b/g,'te').split(' ').filter(Boolean).sort().join(' '); }
-  function lev(a,b){
-    if(a===b) return 0; const m=a.length, n=b.length; if(!m) return n; if(!n) return m;
-    let prev=new Array(n+1); for(let j=0;j<=n;j++) prev[j]=j;
-    for(let i=1;i<=m;i++){ let cur=[i];
-      for(let j=1;j<=n;j++){ const cost=a.charCodeAt(i-1)===b.charCodeAt(j-1)?0:1;
-        cur[j]=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost); }
-      prev=cur; }
-    return prev[n];
-  }
   const WORD_MIN=0.70;   // soglia interna: un refuso (0.9) la supera, una parola diversa (0) no
-  // Somiglianza fra due PAROLE: 1 = identiche; 0.9 = refuso di UNA sola lettera (Levenshtein ≤1); 0 = diverse.
-  // Il refuso di 1 lettera è ammesso SOLO su parole di almeno 3 lettere e senza cifre: così «mogu»/«mogo» e
-  // «cola»/«colla» passano, ma «vitamina E»/«vitamina D», «classe D»/«classe E» e i formati (1L≠2L) NO.
+  // Somiglianza fra due PAROLE: 1 = identiche; 0.9 = refuso di UNA sola lettera SOSTITUITA a PARITÀ di lunghezza
+  // (distanza di Hamming = 1); 0 = diverse. Il refuso è ammesso SOLO su parole di almeno 3 lettere, senza cifre e
+  // di UGUALE lunghezza: così «sottilette»/«sottiletta» e «mogu»/«mogo» passano, mentre «cola»/«colla» NO (lunghezze
+  // 4 e 5: una lettera in più = prodotto diverso), come «vitamina E»/«vitamina D» (1-2 lettere) e i formati (1L≠2L).
   function wordSim(a,b){
     if(a===b) return 1;
     if(/\d/.test(a) || /\d/.test(b)) return 0;      // numeri/formati: solo identici (1L≠2L, 500g≠600g)
     if(a.length<3 || b.length<3) return 0;          // parole di 1-2 lettere: solo identiche (vitamina E ≠ D)
-    return lev(a,b)<=1 ? 0.9 : 0;
+    if(a.length!==b.length) return 0;               // lunghezza diversa = prodotto diverso (cola≠colla, mozzarella≠mozarella)
+    let diff=0;                                     // conta le posizioni con lettera diversa (distanza di Hamming)
+    for(let i=0;i<a.length;i++){ if(a.charCodeAt(i)!==b.charCodeAt(i) && ++diff>1) return 0; }
+    return diff===1 ? 0.9 : 0;                       // esattamente UNA lettera sostituita (sottiletta/sottilette)
   }
   // Punteggio fra due elenchi di parole: -1 se NON è lo stesso prodotto, altrimenti (0..1].
-  // Richiede lo STESSO numero di parole e che ogni parola si abbini a UNA parola dell'altro nome.
-  // Regola «NO-ÀNCORA» (scelta del committente): il refuso di 1 lettera si accetta SOLO se TUTTE le parole
-  // sono refuso (o tutte identiche). Se UNA parola resta IDENTICA e un'altra è un refuso, la parola diversa è
-  // un DISTINGUENTE (mela ROSSA/ROSA, sale GROSSO/ROSSO, pepsi/peppsi lattina) → NON si aggancia da sola.
-  // Così «mogu mogu»=«mogo mogo» (tutte refuso), ma «mela rossa»≠«mela rosa» (mela identica, rossa/rosa refuso).
+  // Richiede lo STESSO numero di parole e che ogni parola si abbini a UNA parola dell'altro nome — identica
+  // oppure refuso di 1 lettera a parità di lunghezza (v. wordSim). Il refuso è ammesso anche quando una parola
+  // resta identica e un'altra cambia: «mela rossa»=«mela russa» (rossa/russa stessa lunghezza), «mogu mogu»=«mogo mogo».
+  // Restano distinti i cambi di lunghezza: «mela rossa»≠«mela rosa» (rossa 5/rosa 4), «pepsi lattina»≠«peppsi lattina».
   function tokenScore(A,B){
     if(!A.length || A.length!==B.length) return -1;
-    const used=new Array(B.length).fill(false); let tot=0, anyExact=false, anyFuzzy=false;
+    const used=new Array(B.length).fill(false); let tot=0;
     for(const wa of A){
       let bj=-1, bs=-1;
       for(let j=0;j<B.length;j++){ if(used[j]) continue; const s=wordSim(wa,B[j]); if(s>bs){ bs=s; bj=j; } }
       if(bj<0 || bs<WORD_MIN) return -1;
-      if(wa===B[bj]) anyExact=true; else anyFuzzy=true;
       used[bj]=true; tot+=bs;
     }
-    if(anyExact && anyFuzzy) return -1;   // NO-ÀNCORA: parola identica + refuso ⇒ prodotti diversi
     return tot/A.length;
   }
   // P3 — parole-riempitivo che NON distinguono un prodotto, in DUE livelli di prudenza:
@@ -510,20 +502,17 @@
   // Punteggio d'aggancio fra due elenchi di parole (già normalizzate/ordinate come da sig()): -1 = prodotti
   // diversi; altrimenti (0..1]. Priorità assoluta: evitare i FALSI POSITIVI.
   function matchScore(A, B){
-    // Livello 1+2: stesso numero di parole, ordine indifferente (il refuso di 1 lettera è gestito da tokenScore/no-àncora).
+    // Livello 1+2: stesso numero di parole, ordine indifferente. Il refuso di 1 lettera a parità di lunghezza è
+    // gestito da wordSim/tokenScore, anche sui nomi di UNA sola parola: «sottilette»=«sottiletta», «grano»=«grana».
     const s=tokenScore(A, B);
-    if(s>=0){
-      // Guardia parola-singola: i nomi di UNA sola parola si agganciano SOLO se IDENTICI — niente refuso su
-      // parola singola (grano≠grana, pane≠rane, mozzarella≠mozarella): troppo rischioso senza altre parole a fare da contesto.
-      if(A.length===1 || B.length===1) return (A[0]===B[0]) ? 1 : -1;
-      return s;
-    }
+    if(s>=0) return s;
     // Livello 3 (riempitivi FORTI rimossi): scatta solo se almeno un riempitivo è stato tolto.
     const Ac=noStop(A), Bc=noStop(B);
     if(Ac.length && Bc.length && !(Ac.length===A.length && Bc.length===B.length)){
       const sc=tokenScore(Ac, Bc);
       if(sc>=0){
-        if(Ac.length===1 || Bc.length===1){ if(Ac[0]===Bc[0]) return FILLER_PEN; }   // una parola: identica
+        // una parola residua per lato: identità o refuso di 1 lettera a parità di lunghezza (sottiletta/sottilette)
+        if(Ac.length===1 || Bc.length===1){ const w=wordSim(Ac[0],Bc[0]); if(w>=WORD_MIN) return w*FILLER_PEN; }
         else return sc*FILLER_PEN;
       }
     }
@@ -598,9 +587,11 @@
   function scriviOra(){
     try{
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ schema:1, salvatoIl:new Date().toISOString(), db:DB }));
+      avvisoSalvataggioDato = false;  // G-F3 — reset quando riesce
     }catch(e){
-      if(!avvisoSalvataggioDato){ avvisoSalvataggioDato=true;
-        try{ toast('Attenzione: salvataggio non disponibile su questo browser'); }catch(_){} }
+      // G-F3 — indicatore (toast) visibile su ogni fallimento finché non riesce
+      try{ toast('Attenzione: salvataggio non disponibile su questo browser'); }catch(_){}
+      avvisoSalvataggioDato=true;
     }
   }
   // Salvataggio con debounce (~250 ms): assorbe le scritture a raffica della dettatura.
@@ -723,7 +714,11 @@
     (function(){
       let k=0, n=null;
       if(N[k]==='mezzo'||N[k]==='mezza'){ n=0.5; k++; }
-      else if((N[k]==='un'||N[k]==='uno'||N[k]==='una') && N[k+1]==='quarto'){ n=0.25; k+=2; if(N[k]==='di') k++; }
+      else if((N[k]==='un'||N[k]==='uno'||N[k]==='una') && N[k+1]==='quarto'){
+        let kk = k+2; if(N[kk]==='di') kk++;
+        const canonChk = UNIT_FORM[N[kk]];
+        if(canonChk && !UNIT_FORMATO.has(canonChk)){ n=0.25; k=kk; }
+      }
       else { const v=numVal(N[k]); if(v!=null){ n=v; k++; } }
       if(n==null) return;
       const canon = UNIT_FORM[N[k]]; if(!canon) return; if(UNIT_FORMATO.has(canon)) return; k++;   // il formato (litri/grammi/chili) non è quantità: resta nel nome
@@ -768,6 +763,7 @@
     }
     let nome = toks.slice(0, i+1).join(' ').replace(/\s+(e|ed|di|più|piu)\s*$/i,'').trim();
     if(!nome && !quantita.length){ nome=rawStr; }
+    if(quantita.length === 0 && /\bquarto\b/i.test(rawStr)) { nome = rawStr; }  // A-R2: "un quarto" senza unità resta nel nome, niente 0.25 pezzo
     return { nome, quantita, raw:rawStr };
   }
 
@@ -1003,9 +999,12 @@
   const toastRoot=document.getElementById('toastRoot');
 
   /* ============ TOAST / SNACKBAR ============ */
-  function toast(msg){
+  function toast(msg, ms){
+    // G-D4 — calcola offset reale dalla actionbar invece di 78px fisso
+    const ab=document.getElementById('actionbar'); const h=(ab&&ab.offsetHeight?ab.offsetHeight:78)+8;
+    toastRoot.style.bottom = h+'px';
     const t=document.createElement('div'); t.className='toast'; t.textContent=msg;
-    toastRoot.appendChild(t); setTimeout(()=>{ t.remove(); }, 2200);
+    toastRoot.appendChild(t); setTimeout(()=>{ t.remove(); }, (ms||4000));
   }
   function buzz(ms){ try{ if(navigator.vibrate) navigator.vibrate(ms||18); }catch(e){} }   // B2 — conferma tattile del prodotto registrato (mani occupate, rumore, luce forte)
   function editingInline(){ const a=document.activeElement; return !!(a && a.classList && a.classList.contains('inline-edit')); }   // B1 — c'è una correzione da tastiera aperta?
@@ -1100,7 +1099,7 @@
     salvaDati();   // ogni modifica dati passa da qui: salvataggio automatico (con debounce)
   }
   // P2 — re-render che conserva lo scorrimento: rinomina / spostamento / eliminazione dentro una lista.
-  function renderKeepScroll(){ keepScroll=true; render(); }
+  function renderKeepScroll(){ keepScroll=true; try { render(); } finally { keepScroll=false; } }  // G-F6 (protect flag)
 
   function setTopbar(parts){
     // parts: {back, titleHTML, subHTML, right}
@@ -1127,7 +1126,7 @@
       const sub=(u.settore && String(u.settore).trim()) ? ('Settore '+u.settore) : 'Nessun settore';
       const av=u.initial || (nm?nm.charAt(0):'?');
       const card=document.createElement('div'); card.className='usercard';
-      card.setAttribute('role','button'); card.tabIndex=0;
+      card.tabIndex=0;  // G-E2 — rimosso role=button (annidamento con <button> interno); click + keydown preservati, area tocco invariata
       card.innerHTML='<span class="av">'+esc(av)+'</span>'+
         '<span><span class="un">'+esc(nm)+'</span><br><span class="us">'+esc(sub)+'</span></span>'+
         '<button class="rowbtn" aria-label="Elimina utente" style="margin-left:auto">'+IC.trash+'</button>'+
@@ -1227,9 +1226,9 @@
 
     const wrap=document.createElement('div'); wrap.className='pad';
     // Segmented Sala / Magazzino
-    const seg=document.createElement('div'); seg.className='seg';
-    seg.innerHTML='<button class="seg-btn" data-t="sala" aria-selected="'+(S.homeTab==='sala')+'">Sala espositiva</button>'+
-                  '<button class="seg-btn" data-t="mag" aria-selected="'+(S.homeTab==='mag')+'">Magazzino</button>';
+    const seg=document.createElement('div'); seg.className='seg'; seg.setAttribute('role','tablist');
+    seg.innerHTML='<button class="seg-btn" role="tab" data-t="sala" aria-selected="'+(S.homeTab==='sala')+'">Sala espositiva</button>'+
+                  '<button class="seg-btn" role="tab" data-t="mag" aria-selected="'+(S.homeTab==='mag')+'">Magazzino</button>';  // G-E5
     seg.querySelector('[data-t="sala"]').onclick=()=>{ S.homeTab='sala'; render(); };
     seg.querySelector('[data-t="mag"]').onclick=()=>go('magazzino');
     wrap.appendChild(seg);
@@ -1239,7 +1238,7 @@
     u.corsie.forEach(c=>{
       const voci=c.scaffali.reduce((n,s)=>n+s.voci.length,0);
       const card=document.createElement('div'); card.className='corsia-card';
-      card.setAttribute('role','button'); card.tabIndex=0;
+      card.tabIndex=0;  // G-E2 — rimosso role=button (annidamento con <button> interno); click + keydown preservati, area tocco invariata
       card.innerHTML='<div class="cc-top"><div style="min-width:0"><div class="cc-name">'+esc(c.nome)+'</div>'+
         '<div class="cc-meta">'+c.scaffali.length+' scaffali · '+voci+' voci</div></div>'+
         '<button class="rowbtn cc-edit" aria-label="Rinomina corsia">'+IC.pencil+'</button>'+
@@ -1462,7 +1461,7 @@
     let sc=scaffOf(S.dictSid);
     if(!sc){ sc=c.scaffali.length ? c.scaffali[c.scaffali.length-1] : null; S.dictSid=sc?sc.id:null; }
     setTopbar({
-      titleHTML:'<div class="tb-title tb-rec"><span class="rec-live" style="width:10px;height:10px;border-radius:50%;background:var(--rec);display:inline-block"></span>'+
+      titleHTML:'<div class="tb-title tb-rec">'+ (S.recording ? '<span class="rec-live" style="width:10px;height:10px;border-radius:50%;background:var(--rec);display:inline-block"></span>' : '') +
         (S.recording?'In ascolto…':'Dettatura')+'</div>',
       subHTML:'<div class="tb-sub">'+esc(c.nome)+' · '+(sc?esc(sc.titolo):'')+'</div>'
     });
@@ -1479,7 +1478,7 @@
       pick.setAttribute('aria-label','Cambia lo scaffale in cui stai dettando');
       pick.className='dict-pick';   // Fix box gigante: la sua icona IC.box era l'unica SVG senza classe -> si dilatava a dimensione intrinseca
       pick.style.cssText='display:flex;align-items:center;gap:8px;width:100%;background:var(--blu-bg);'+
-        'border:1px solid rgba(27,91,215,.25);border-radius:12px;padding:11px 12px;margin:2px 0 10px;'+
+        'border:1px solid rgba(27,91,215,.25);border-radius:12px;padding:11px 12px;margin:2px 0 10px;min-height:56px;'+
         'font-family:inherit;font-size:14px;color:var(--blu);font-weight:700;cursor:pointer;text-align:left';
       pick.innerHTML=IC.box+'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+
         'Detti in: «'+esc(sc.titolo||'Nuovo scaffale')+'»</span><span style="font-weight:800;white-space:nowrap">Cambia ▾</span>';
@@ -1747,11 +1746,11 @@
   // successiva (es. Mozzarella↔Mozarella). Se il prodotto non è più nel nuovo inventario, purgeLinkOrfani lo toglie.
   function remapLinkManuali(oldRighe, newRighe){
     const oldById=new Map((oldRighe||[]).map(r=>[r.id,r]));
-    const newBySig=new Map(); (newRighe||[]).forEach(r=>{ const k=sig(r.nome); if(!k) return; if(!newBySig.has(k)) newBySig.set(k, []); newBySig.get(k).push(r); });
+    const newBySig=new Map(); (newRighe||[]).forEach(r=>{ const base=(parseRiga(r.nome).nome||r.nome); const k=sig(base); if(!k) return; if(!newBySig.has(k)) newBySig.set(k, []); newBySig.get(k).push(r); });
     (U().corsie||[]).forEach(c=> (c.scaffali||[]).forEach(sc=> (sc.voci||[]).forEach(v=>{
       if(!v.linkId) return;
       const oldR=oldById.get(v.linkId); if(!oldR) return;   // già verso una riga corrente/ignota: lascia decidere purge
-      const cand=newBySig.get(sig(oldR.nome)); if(!cand||!cand.length) return;
+      const baseOld=(parseRiga(oldR.nome).nome||oldR.nome); const cand=newBySig.get(sig(baseOld)); if(!cand||!cand.length) return;
       // #4 — con più righe omonime in ambiti diversi (tolto il dedup cross-corsia), scegli quella della corsia della
       // voce, poi quella dell'ambito precedente, poi la prima: l'aggancio manuale resta sul magazzino giusto.
       const pick=cand.find(r=>r.ambito===c.id) || cand.find(r=>r.ambito===oldR.ambito) || cand[0];
@@ -1786,7 +1785,7 @@
       match.set(v, grp ? {quantita:grp.quantita, rigaIds:grp.righe.map(x=>x.id)} : {quantita:r.quantita||[], rigaIds:[r.id]});
       if(k) takenKey.add(k);
     });
-    // 2) candidati per nome (esatto=1, refuso no-àncora≈0.9, omissione riempitivi=0.97), assegnazione uno-a-uno per punteggio decrescente
+    // 2) candidati per nome (esatto=1, refuso di 1 lettera a parità di lunghezza≈0.9, omissione riempitivi=0.97), assegnazione uno-a-uno per punteggio decrescente
     const keys=Object.keys(map), pairs=[];
     voci.forEach(v=>{
       if(match.has(v) || v.noMatch) return;   // A10 — «nessun riscontro» forzato a mano: non abbinare automaticamente
@@ -1961,6 +1960,7 @@
   }
   // Annullamento della sessione in corso: scarta lo staging, l'inventario committato resta invariato.
   function annullaInventario(){
+    if(S.magRecording){ S.magRecording=false; Speech.stop(); }  // G-F4 — stop PRIMA del modal
     const inv=U().inv; const n=inv.staging.length;
     modal('<h3>Annullare l\'inventario in corso?</h3><p>Le <b>'+n+'</b> voci dettate in questa sessione '+
       'verranno scartate. L\'inventario precedente resta invariato.</p>',
@@ -1988,7 +1988,8 @@
     if(inv.active){
       // SESSIONE IN CORSO — si detta nel blocco di staging; l'ambito è mostrato nel banner.
       const banner=document.createElement('div'); banner.className='inv-banner';
-      banner.innerHTML='<span class="rec-live"></span><span class="txt"><b>Inventario in corso</b>'+
+      const recDot = S.magRecording ? '<span class="rec-live"></span>' : '';
+      banner.innerHTML=recDot+'<span class="txt"><b>Inventario in corso</b>'+
         '<small>'+esc(inv.ambitoNome||inv.settore)+' · iniziato '+esc(inv.iniziata)+'</small></span>'+
         '<span class="inv-count">'+inv.staging.length+'</span>';
       screen.appendChild(banner);
@@ -2017,7 +2018,7 @@
       mprov.innerHTML='<div class="voce-name provisional" id="magProvText"></div>';
       wrap.appendChild(mprov);
       const add=document.createElement('button'); add.className='addbtn'; add.innerHTML=IC.plus+'Aggiungi voce';
-      add.onclick=()=>{ const nr={id:nid(), nome:'Nuova voce', quantita:[], raw:'Nuova voce'}; inv.staging.push(nr); S.magRecording=false; render();   // A1 — «Aggiungi voce» ferma la dettatura viva (render nudo): allinea il flag così la UI non resta «In ascolto» col microfono fermo
+      add.onclick=()=>{ const nr={id:nid(), nome:'Nuova voce', quantita:[], raw:'Nuova voce'}; inv.staging.push(nr); S.magRecording=false; buzz(); render();   // C-R3 — vibrazione anche su commit manuale (Aggiungi voce)
         const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.rid===nr.id);
         if(el) editMagRow(el, nr); };
       wrap.appendChild(add);
@@ -2077,7 +2078,7 @@
     kb.onclick=()=>{
       const inv=U().inv; const i=inv.staging.indexOf(r); if(i<0) return;
       // FUNZIONE D/D2 — se si sta dettando, ricostruire senza fermare il riconoscimento (come flashMagRow)
-      const rebuild=()=>{ if(S.magRecording){ keepSpeech=true; render(); keepSpeech=false; try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render(); };
+      const rebuild=()=>{ if(S.magRecording){ keepSpeech=true; try{ render(); } finally { keepSpeech=false; } try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render(); };  // G-F6
       inv.staging.splice(i,1); rebuild();
       snackbar('Voce eliminata','Annulla',()=>{ inv.staging.splice(Math.min(i,inv.staging.length),0,r); rebuild(); });
     };
@@ -2092,7 +2093,7 @@
       if(save && v){ const p=parseRiga(v); r.nome=cap(p.nome); r.quantita=p.quantita; r.raw=v; }
       // FUNZIONE D — correggere una riga durante la dettatura di magazzino NON deve fermare il riconoscimento:
       // render() (keepSpeech=false) chiamerebbe Speech.stop() lasciando però S.magRecording=true (UI «in ascolto» ma motore fermo).
-      if(S.magRecording){ keepSpeech=true; render(); keepSpeech=false; try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render(); };
+      if(S.magRecording){ keepSpeech=true; try{ render(); } finally { keepSpeech=false; } try{ screen.scrollTop=screen.scrollHeight; }catch(e){} } else render(); };  // G-F6
     inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();done(true);} else if(e.key==='Escape'){done(false);} });
     inp.addEventListener('blur',()=>done(true));
   }
@@ -2121,7 +2122,7 @@
   function flashMagRow(id){
     buzz();   // B2 — conferma tattile in magazzino
     if(editingInline()){ salvaDati(); return; }   // B1 — non ricostruire il DOM mentre si corregge da tastiera (la voce è già nello staging)
-    keepSpeech=true; render(); keepSpeech=false;
+    keepSpeech=true; try{ render(); } finally { keepSpeech=false; }  // G-F6
     // BUG2/2b — dopo la ricostruzione ancora la vista al fondo, poi scorrimento istantaneo sulla riga.
     try{ screen.scrollTop=screen.scrollHeight; }catch(e){}
     const el=[...screen.querySelectorAll('.voce-name')].find(n=>n.dataset.rid===id);
@@ -2203,7 +2204,7 @@
       inv.righe = (inv.righe||[]).filter(r=> r.ambito!==scopeId).concat(inv.staging);
     }
     inv.staging=[]; inv.active=false; inv.ambito=null; inv.ambitoNome='';
-    inv.prevData='oggi'; inv.prevCount=inv.righe.length;
+    // G-F8: rimossa assegnazione prevData/prevCount (dead)
     remapLinkManuali(oldRighe, inv.righe);   // A5 — trasferisce gli agganci manuali dai vecchi id ai nuovi (per firma) PRIMA di ripulire gli orfani
     purgeLinkOrfani(inv);   // BUG3 — nessun aggancio fantasma sopravvive alla sovrascrittura
     // FUNZIONE C — utente senza corsie: chiusura con riepilogo essenziale, senza toccare corsie[0].
@@ -2242,9 +2243,8 @@
       'Agganciate al listino di sala: <b>'+agg+'</b> · '+
       'Voci di sala senza riscontro: <b>'+senza+'</b> · '+
       'Solo in magazzino: <b>'+soli+'</b>.</p>',
-      [ {label:'Vai alla consultazione in sala', cls:'primary', onClick:()=>{ go('corsia',{corsiaId:dest});
-          setTimeout(()=>go('stock',{filter:false}),10); }},
-        {label:'Torna alla home', onClick:()=>go('home',{homeTab:'sala'}) } ], false);
+      [ {label:'Vai alla consultazione in sala', cls:'primary', onClick:()=>{ go('corsia',{corsiaId:dest}); go('stock',{filter:false}); }},
+        {label:'Torna alla home', onClick:()=>go('home',{homeTab:'sala'}) } ], false);  // G-F13 — no setTimeout(10)
     toast('Inventario concluso · '+scopeNome);
   }
 
